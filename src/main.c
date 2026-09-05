@@ -2,6 +2,7 @@
 #include <zephyr/logging/log.h>
 
 #include "keys/keys.h"
+#include "led/led.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -9,11 +10,17 @@ int main(void)
 {
 	int err;
 
-	LOG_INF("=== 蓝牙小键盘启动（阶段 1：矩阵按键） ===");
+	LOG_INF("=== 蓝牙小键盘启动（阶段 1：矩阵按键 + 按键 LED） ===");
 
 	err = keys_init();
 	if (err) {
 		LOG_ERR("按键模块初始化失败: %d", err);
+		return err;
+	}
+
+	err = kb_led_init();
+	if (err) {
+		LOG_ERR("按键 LED 模块初始化失败: %d", err);
 		return err;
 	}
 

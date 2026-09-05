@@ -13,6 +13,8 @@
 
 #include <errno.h>
 
+#include "led/led.h"
+
 #include <zephyr/device.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/input/input.h>
@@ -114,6 +116,18 @@ static void matrix_cb(struct input_event *evt, void *user_data)
 	LOG_INF("按键 %-22s ROW%u COL%u key_id=%2u -> %s",
 		name, cur_row, cur_col, KB_KEY_ID(cur_row, cur_col),
 		cur_pressed ? "按下" : "松开");
+
+	/*
+	 * 驱动对应的按键 LED：按下点亮，松手渐灭。
+	 * EC11 旋钮按键 (0,3) 等无灯键位由 led 模块查表后静默忽略。
+	 * 这两个函数只改状态 + 提交工作项，真正的 SPI 刷新在工作队列里做，
+	 * 不会阻塞 input 线程。
+	 */
+	if (cur_pressed) {
+		kb_led_press(cur_row, cur_col);
+	} else {
+		kb_led_release(cur_row, cur_col);
+	}
 }
 
 /* 键值映射设备的事件：已经是标准键值，每条自带 sync */

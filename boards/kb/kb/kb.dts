@@ -5,6 +5,7 @@
 #include <zephyr/dt-bindings/gpio/gpio.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 #include <zephyr/dt-bindings/input/keymap.h>
+#include <zephyr/dt-bindings/led/led.h>
 
 / {
 	model = "kb";
@@ -14,6 +15,21 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+	};
+
+	/*
+	 * WS2812 灯带供电开关：RGB_PWR_EN(P0.13) 高电平使能 RGB_VCC。
+	 *
+	 * 建模为 fixed regulator 的好处：regulator_enable() 会自动处理
+	 * startup-delay-us（上电到数据有效的等待），且带引用计数，
+	 * 将来低功耗模块也能安全调用。上电默认断电。
+	 */
+	rgb_vcc: regulator-rgb-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "rgb-vcc";
+		enable-gpios = <&gpio0 13 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <1000>;
+		regulator-boot-off;
 	};
 
 	/*
@@ -109,6 +125,38 @@
 	status = "okay";
 };
 
+/*
+ * WS2812 灯带（SPI 方式驱动，17 颗）
+ *
+ * 时序取值 4MHz + one=0x70 / zero=0x40 是本 SDK 内 Nordic 官方板
+ * (actinius_icarus_som_dk) 的在树用法：一位 250ns，'1' 高 750ns、
+ * '0' 高 250ns，正好落在驱动文档给的「'0' 200~500ns / '1' >=550ns」窗口内。
+ *
+ * ⚠️ WS2812 是单线协议只用到 MOSI，但 SPIM 外设必须有 SCK 才会出时钟，
+ *    所以 pinctrl 里给 SCK 分配了空闲哑引脚 P1.10（对外不接线）。
+ * ⚠️ 后续屏幕 SPI 必须避开 spi2。
+ */
+&spi2 {
+	compatible = "nordic,nrf-spim";
+	status = "okay";
+	pinctrl-0 = <&spi2_default>;
+	pinctrl-1 = <&spi2_sleep>;
+	pinctrl-names = "default", "sleep";
+
+	ws2812: ws2812@0 {
+		compatible = "worldsemi,ws2812-spi";
+		reg = <0>;                     /* SPI 绑定要求的格式，灯带无片选 */
+		spi-max-frequency = <4000000>;
+		chain-length = <17>;           /* 18 个键位 - EC11 旋钮按键无灯 */
+		spi-one-frame = <0x70>;
+		spi-zero-frame = <0x40>;
+		color-mapping = <LED_COLOR_ID_GREEN
+				 LED_COLOR_ID_RED
+				 LED_COLOR_ID_BLUE>;   /* WS2812 线上顺序是 GRB */
+		reset-delay = <50>;
+	};
+};
+
 &flash0 {
 	partitions {
 		compatible = "fixed-partitions";
@@ -134,5 +182,12 @@
 			label = "storage";
 			reg = <0x000f8000 DT_SIZE_K(32)>;
 		};
+	};
+};
+
+/* 灯带别名：应用层用 DT_ALIAS(led_strip) 取设备，不硬编码节点路径 */
+/ {
+	aliases {
+		led-strip = &ws2812;
 	};
 };
