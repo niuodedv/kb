@@ -1,0 +1,773 @@
+
+===== PAGE 1 =====
+V1.2  http://www.injoinic.com/                  1 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+2.1A 充电 2.4 A 放电高集成度移动电源 SOC 
+1 特性 
+ 同步开关充放电 
+ 2.4A 同步升压转换,2.1A 同步开关充电 
+ 升压效率高达 92% 
+ 充电效率高达 91% 
+ 内置电源路径管理，支持边充边放 
+ 充电 
+ 自适应充电电流调节，自适应适配器 
+ 支持 4.20/4.30/4.35/4.40V 电池 
+ 电量显示 
+ 支持 4,3,2,1 颗 LED 电量显示 
+ 功能丰富 
+ 按键开机 
+ 内置照明灯驱动 
+ 自动检测手机插入和拔出 
+ 低功耗 
+ 智能识别负载，自动进待机 
+ 待机功耗小于 100 µA 
+ BOM 极简 
+ 功率 MOS 内置，单电感实现充放电 
+ 多重保护、高可靠性 
+ 输出过流、过压、短路保护 
+ 输入过压、过充、过放、过流放电保护 
+ 整机过温保护 
+ ESD 4KV，瞬间耐压 12V 
+2 应用 
+ 移动电源/充电宝 
+ 手机、平板电脑等便携式设备 
+3 简介 
+IP5306 是一款集成升压转换器、锂电池充电管
+理、 电池电量指示的多功能电源管理 SOC， 为移动
+电源提供完整的电源解决方案。 
+IP5306 的高集成度与丰富功能， 使其在应用时
+仅需极少的外围器件， 并有效减小整体方案的尺寸，
+降低 BOM 成本。 
+IP5306 只需一个电感实现降压与升压功能。可
+以支持低成本电感和电容。 
+IP5306 的同步升压系统提供最大 2.4A 输出电
+流，转换效率高至 92%。空载时，自动进入休眠状
+态，静态电流降至 100uA。 
+IP5306 采用开关充电技术，提供最大 2.1A 电
+流，充电效率高至 91%。内置 IC 温度和输入电压
+智能调节充电电流。 
+IP5306 支持 1、2、3、4 颗 LED 电量显示。 
+IP5306 采用 eSOP8L 封装。 
+ 
+ 深度定制 
+ I2C 接口，可灵活、低成本定制方案 
+ 
+图 1 简化应用原理图(4 LED 指示电量) 
+ 
+                      IP5306-I2C 
+===== PAGE 2 =====
+V1.2  http://www.injoinic.com/                  2 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+4 引脚定义 
+VIN
+LED2
+VOUT
+SW
+BAT
+KEY
+LED1
+1
+2
+3
+4 5
+6
+7
+8
+eSOP8
+power
+PAD
+LED3
+ 
+图 2   IP5306 引脚图 
+ 
+Pin Name Pin Number Pin Description 
+VIN 1 DC5V 充电输入引脚 
+LED1 2 LED 驱动引脚 
+LED2 3 LED 驱动引脚 
+LED3 4 LED 驱动引脚 
+KEY  5 按键输入， 照明灯驱动复用 
+BAT  6 升压输入引脚， 连接锂电池正极. 
+SW 7 DC-DC 开关引脚 
+VOUT 8 5V 升压输出引脚 
+PowerPAD  Connect to GND 
+ 
+  
+                      IP5306-I2C 
+===== PAGE 3 =====
+V1.2  http://www.injoinic.com/                  3 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+5  IP 系列移动电源 IC 型号选择表 
+ 
+IC 型号 
+充放电 主要特点 封装 
+放电 充电 LED 
+灯数 照明灯 按键 I2C DCP Type-C QC 认证  规格 兼容 
+IP5101 1.0A 1.2A 1,2 - - - - - - eSOP8  
+IP5303 1.0A 1.2A 1,2 √ √ - - - - eSOP8 
+PIN2PIN 
+IP5305 1.0A 1.2A 1,2,3,4 √ √ - - - - eSOP8 
+IP5306 2.4A 2.1A 1,2,3,4 √   - - - eSOP8 
+IP5206 2A(Max) 1.5A 3,4,5 √ √ - - - - eSOP16 
+PIN2PIN 
+IP5108E 2.0A 1.0A 3,4,5 √ √ - - - - eSOP16 
+IP5108 2.0A 2.0A 3,4,5 √ √ √ - - - eSOP16 
+IP5207 1.2A 1.2A 3,4,5 √ √ - - - - QFN24 
+PIN2PIN 
+IP5207T 1.2A 1.2A 1,2,3,4 √ √ √ √ - - QFN24 
+IP5109 2.1A 2.1A 3,4,5 √ √ √ - - - QFN24 
+IP5209 2.4A 2.1A 3,4,5 √ √ √ √ - - QFN24 
+IP5219 2.4A 2.1A 1,2,3,4 √ √ √ - √ - QFN24  
+IP5318Q 18W 4.8A 2,3,4,5 √ √ √ √  √ QFN40 
+PIN2PIN 
+IP5318 18W 4.8A 2,3,4,5 √ √ √ √ √ √ QFN40 
+ 
+ 
+IP5306 电芯定制型号 
+订单型号 电芯类型 
+IP5306 4.20V 
+IP5306_4.30V 4.30V 
+IP5306_4.35V 4.35V 
+IP5306_4.40V 4.40V 
+√ √
+                      IP5306-I2C 
+===== PAGE 4 =====
+V1.2  http://www.injoinic.com/                  4 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+6 极限参数 
+参数 符号 值 单位 
+端口输入电压范围 VIN -0.3 ~ 5.5 V 
+结温范围 TJ -40 ~ 150 ℃ 
+存储温度范围 T stg -60 ~ 150 ℃ 
+热阻（结温到环境） θJA 50 ℃/W 
+人体模型（HBM） ESD 4 KV 
+*高于绝对最大额定值部分所列数值的应力有可能对器件造成永久性的损害， 在任何绝对最大额定值条件下
+暴露的时间过长都有可能影响器件的可靠性和使用寿命 
+7 推荐工作条件 
+参数 符号 最小值 典型值 最大值 单位 
+输入电压 VIN 4.75 5 5.5 V 
+负载电流 I 0 2.4 3 A 
+工作环境温度 TA 0 -- 70 ℃ 
+*超出这些工作条件，器件工作特性不能保证。 
+ 
+8 电气特性 
+除特别说明，TA=25℃，L=1.0uH 
+参数 符号 测试条件 最小
+值 
+典型
+值 
+最大
+值 单位 
+充电系统 
+输入电压 VIN  4.75 5 5.5 V 
+输入工作电流 
+IVIN 
+VIN=5V，fs=750KHz   2 mA 
+输入静态电流 VIN=5V，Device not switching  100  uA 
+充电目标电压 VTRGT   4.2  V 
+充电电流 ICHRG   2.1  A 
+充电开关频率 fs   750  KHz 
+涓流充电电流 ITRKL VIN=5V，BAT=2.7V  100  mA 
+涓流截止电压 VTRKL   2.9  V 
+再充电阈值 VRCH   4.1  V 
+                      IP5306-I2C 
+===== PAGE 5 =====
+V1.2  http://www.injoinic.com/                  5 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+充电截止时间 TEND   24  Hour 
+输入欠压保护 VUVLO 上升电压  4.5  V 
+欠压保护迟滞 VUVLOH   200  mV 
+升压系统 
+电池工作电压 VBAT  3.0  4.4 V 
+开关工作电池输入
+电流 IBAT 
+VBAT=3.7V，VOUT=5.0V，fs=500KHz  3  mA 
+VIN=5V，Device not switching  100  uA 
+DC 输出电压 VOUT VBAT=3.7V  5.0  V 
+输出电压纹波 ΔVOUT VBAT=3.7V，VOUT=5.0V，fs=500KHz  50  mV 
+升压开关频率 fs   500  KHz 
+升压系统供电电流 Ivout   2.4  A 
+负载过流检测时间 TUVD 输出电压持续低于 4.4V  30  ms 
+负载短路检测时间 TOCD 输出电流持续大于 4A 150  200 us 
+控制系统 
+PMOS 导通电阻 
+rDSON 
+  35  mΩ 
+NMOS 导通电阻   30  mΩ 
+电池输入待机电流 ISTB VIN=0V，VBAT=3.7V  50  uA 
+LED 照明驱动电流 Key   25  mA 
+LED 显示驱动电流 
+IL1 
+IL2 
+IL3 
+  25  mA 
+负载自动检测时间 TloadD 负载电流持续小于 45mA  32  s 
+短按键唤醒时间 TOnDebounce   50  ms 
+打开 light 时间 TKeylight   2  s 
+热关断温度 TOTP 上升温度  125  ℃ 
+热关断温度迟滞 ΔTOTP   40  ℃ 
+ 
+  
+                      IP5306-I2C 
+===== PAGE 6 =====
+V1.2  http://www.injoinic.com/                  6 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+9 灯显模式 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 7 =====
+V1.2  http://www.injoinic.com/                  7 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+ 4 灯模式 
+放电 
+电量 C（%） D1 D2 D3 D4 
+C≥75% 亮 亮 亮 亮 
+50%≤C＜75% 亮 亮 亮 灭 
+25%≤C＜50% 亮 亮 灭 灭 
+3%≤C＜25% 亮 灭 灭 灭 
+0%＜C＜3% 1.5Hz 闪烁 灭 灭 灭 
+充电 
+电量 C（%） D1 D2 D3 D4 
+充满 亮 亮 亮 亮 
+75%≤C 亮 亮 亮 0.5Hz 闪烁 
+50%≤C＜75% 亮 亮 0.5Hz 闪烁 灭 
+25%≤C＜50% 亮 0.5Hz 闪烁 灭 灭 
+C＜25% 0.5Hz 闪烁 灭 灭 灭 
+ 
+ 3 灯模式 
+  三灯显示方式和四灯类似，每颗灯对应的电池电量如下表  
+  D1 D2 D3 D4 
+三颗灯 3% 66% 100% 无 
+四颗灯 25% 50% 75% 100% 
+ 
+ 2 灯模式 
+ 状态 D1 D2 
+充电 充电过程 闪烁 灭 
+充满 亮 灭 
+放电  灭 亮 
+低电 灭 闪烁 
+ 
+ 1 灯模式  
+ 状态 D1 
+充电 充电过程 闪烁 
+充饱 亮 
+放电 正常放电 亮 
+低电 闪烁 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 8 =====
+V1.2  http://www.injoinic.com/                  8 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+10 按键方式 
+IP5306 可识别长按键和短按键操作，不需要按键时 PIN5 脚悬空。 
+ 按键持续时间长于 30ms，但小于 2s， 即为短按动作，短按会打开电量显示灯和升压输出。 
+ 按键持续时间长于 2s， 即为长按动作， 长按会开启或者关闭照明 LED。 
+ 小于 30ms 的按键动作不会有任何响应。 
+ 在 1s 内连续两次短按键，会关闭升压输出、电量显示和照明 LED。 
+11 典型应用原理图 
+IP5306 只需要电感、电容、电阻， 即可实现完整功能的移动电源方案。  
+ 
+ 
+图 7  4 LED 电量显示典型应用原理图 
+                      IP5306-I2C 
+===== PAGE 9 =====
+V1.2  http://www.injoinic.com/                  9 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+ 
+图 8  I2C 典型应用原理图 
+电感推荐型号 
+SPM70701R0 
+DARFON PIN 
+Inductance 
+(uH) 
+Tolerance  
+DC Resistance 
+(mΩ) 
+Heat Rating 
+Current 
+DC Amp. 
+Saturation 
+Current 
+DC Amps. 
+Measuring 
+Condition  
+Typ. Max. Idc(A)Max. Isat(A)Max. 
+SPM70701R0 1.0 ±20% 8.5 8 12 15  
+锂电 IC 推荐型号 
+INJOINIC Pack age Overcharge Detection
+ Voltage [VCU] (V) 
+Overdischarge Detection 
+Voltage [VDL] (V) 
+Overcurrent 
+Detection Current [IOV] (A) 
+IP3005A ESOP8 4.28V 2.5V 7A 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 10 =====
+V1.2  http://www.injoinic.com/                  10 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+12 封装信息 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+SYMBOL 
+MILLIMETER 
+MIN NOM MAX 
+A -- -- 1.65 
+A1 0.05 -- 0.15 
+A 1.30 1.40 1.50 
+A3 0.60 0.65 0.70 
+b 0.39 -- 0.48 
+b1 0.38 0.41 0.43 
+c 0.21 -- 0.25 
+c1 0.19 0.20 0.21 
+D 4.70 4.90 5.10 
+E 5.80 6.00 6.20 
+E1 3.70 3.90 4.10 
+e 1.27BSC 
+h 0.25 -- 0.50 
+L 0.50 0.60 0.80 
+L1 1.05BSC 
+θ 0 -- 8º 
+D1 -- 2.09 -- 
+E2 -- 2.09 -- 
+                      IP5306-I2C 
+===== PAGE 11 =====
+V1.2  http://www.injoinic.com/                  11 / 11                   Copyright © 2016, Injoinic Corp.                                                                                                                  
+责任及版权申明 
+ 
+英集芯科技有限公司有权根据对所提供的产品和服务进行更正、修改、增强、改进或其它更改， 客户
+在下订单前应获取最新的相关信息, 并验证这些信息是否完整且是最新的。所有产品的销售都遵循在订单确
+认时所提供的销售条款与条件。 
+       英集芯科技有限公司对应用帮助或客户产品设计不承担任何义务。客户应对其使用英集芯的产品和应
+用自行负责。为尽量减小与客户产品和应用相关的风险，客户应提供充分的设计与操作安全验证。 
+       客户认可并同意，尽管任何应用相关信息或支持仍可能由英集芯提供，但他们将独力负责满足与其产
+品及在其应用中使用英集芯产品 相关的所有法律、法规和安全相关要求。客户声明并同意，他们具备制定
+与实施安全措施所需的全部专业技术和知识，可预见故障的危险后果、监测故障及其后果、降低有可能造
+成人身伤害的故障的发生机率并采取适当的补救措施。客户将全额赔偿因在此类关键应用中使用任何英集
+芯产品而对英集芯及其代理造成的任何损失。 
+       对于英集芯的产品手册或数据表，仅在没有对内容进行任何篡改且带有相关授权、条件、限制和声明
+的情况下才允许进行复制。英集芯对此类篡改过的文件不承担任何责任或义务。复制第三方的信息可能需
+要服从额外的限制条件。 
+       英集芯会不定期更新本文档内容，产品实际参数可能因型号或者其他事项不同有所差异，本文档不作
+为任何明示或暗示的担保或授权 
+       在转售英集芯产品时，如果对该产品参数的陈述与英集芯标明的参数相比存在差异或虚假成分，则会
+失去相关英集芯产品的所有明示或暗示授权，且这是不正当的、欺诈性商业行为。英集芯对任何此类虚假
+陈述均不承担任何责任或义务。 
+                      IP5306-I2C 
+===== PAGE 12 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+IP5306 寄存器文档 
+1、I2C 协议 
+The i2c speed support 400Kbps.Support 8 bit address width and 8bit data width. Transmit and receive MSB 
+first. The default slave address is 0Xea。 
+I2C acts as slave and is controlled by the master. The SCK line of the I2C interface is driven by the master. 
+The SDA line could be pulled up to VCC by a 2.2Kohm resister and pulled 
+down by either the master or the slave.A typical WRITE sequence for writing 8bits data to a register is 
+shown in below figure. A start bit isgiven by the master, followed by the slave address, register address and 
+8-bit data. After each 8-bit address or data transfer, the IP5306 gives an ACK bit. The master stops writing by 
+sending a stop bit. 
+All 8 bits data must be written before the register is updated. 
+Example: Write 8bit data 0x5a to register 0x05, and the slave address is 0Xea 
+SCLK
+SDA
+Start sACK
+Slave address 0xEA
+sACK
+Register address 0x05
+sACK
+Data 0x5A
+Stop 
+ 
+Note：Sack generated by Slave, Mack generated by Master, and Mnack is a NACK generated by Master 
+Figure1  I2C WRITE  
+ 
+A typical READ sequence is shown in below figure. First the master has to write the slave address,followed 
+by the register address. Then a restart bit and the slave address specify that a READ is generated. The master 
+then clocks out 8 bits at a time to read data. 
+Example: Read 8bit data 0x5A from register 0x05, and the slave address is 0Xea
+SCLK
+SDA
+Start sACK
+Slave address 0xEA
+sACK
+Register address 0x05
+mNACK
+Data 0x5A
+Stop Restart 
+sACK
+Slave address 0xEB
+ 
+Figure2  I2C Read  
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 13 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+2、I2C 应用注意事项 
+L2
+L1
+L3
+BAT
+SCL
+SDAMCU
+IRQ
+BAT VDD
+MCU需要从BAT取电
+工作状态：IRQ为高电平
+      休眠状态： IRQ为高阻状态
+2.2K
+2.2K
+ 
+ I2C 连接示意图 
+ 
+1、IP5306 标准品默认不支持 I2C，需要单独定制 I2C 版本，请按照 IP5306_I2C 的型号申请样品和下单 
+ 
+2、 如果要修改IP5306 某个寄存器地址=的时候需要先将相应寄存器地址=的值读出来对需要修改的 BIT 位进
+行与或运算后再把计算的值写进这个寄存器地址=，确保只修改需要修改的 bit 其他 bit 的值不能随意改动 
+ 
+3、使用建议: 
+1) 用IRQ信号判断IP5306是处于工作态还是待机态： IRQ=1时工作，IRQ=0时处于待机 
+2) 用寄存器地址=0x70的bit3判断IP5306是充电还是放电：bit3=1时充电，bit3=0时放电 
+3) 用寄存器地址=0x71的bit3判断电池是否已经被充满：bit3=1时充满，bit3=0时未充满 
+4) IP5306内部没有电压电流信息，只能加外部带ADC的MCU去管理电池电量 
+ 
+4、I2C 通讯波形介绍 
+ 
+I2c master 写的时候，先传 8bit 数据，第 9 个 bit 读 slave 返回的 ack，ack 为低代表写入成功，为高代表写
+入不成功。 
+I2c master 读的时候，最后一个 byte 传输是 slave 返回数据，master 返回 nack（高电平），代表读结束；如
+果 master 返回的是 ack（低电平），则说明读没有结束，master 会继续读。  
+所以第九个 bit 的 ack 信号要看 master 端是读操作还是写操作： 
+因为 IP5306 只能做 slave： 
+如果往 IP5306 寄存器地址=写入数据，IP5306 返回 ack 为低电平； 
+如果从 IP5306 读取数据，IP5306 返回 nack 高电平），（master 必须发 NACK，否则会有异常）代表读结束 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 14 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+3、寄存器地址 
+标示为“Reserved”的寄存器地址=位有特殊控制作用，不可改变原有的值，否则会出现无法预期的结
+果。 对寄存器地址=的操作必须按照 “读-->修改-->写” 来进行， 只修改要用到的bit， 不能修改其他未用 bit 
+的值。 
+SYS_CTL0 
+寄存器地址=0X00 
+Bit(s) Name Description R/W Reset 
+7:6  Reserved  10 
+5  Boost enable 
+0: disable 
+1:enable 
+注：disable 后 IP5306 没办法自动轻载关机，需
+要按键发送双击脉冲信号才能关机进入休眠 
+RW 1 
+ 
+4  Charger enable 
+0: disable 
+1:enable 
+注：在充满电停充充电后，在不拔掉输入的情况
+下 enable – disable- enable，可以重新开启充电 
+ 
+RW 1 
+ 
+3  Reserved  1 
+2  插入负载自动开机功能使能 
+0: disable 
+1:enable 
+RW 1 
+1  BOOST 输出常开功能 
+0: disable 
+1:enable 
+RW 1 
+0  按键关机使能 
+0: disable 
+1:enable 
+RW 0 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 15 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+SYS_CTL1 
+寄存器地址=0X01 
+Bit(s) Name Description R/W Reset 
+7  关闭 boost 升压的控制信号选择 
+1：长按 
+0：短按两次 
+R/W 0 
+6  开关 WLED 手电筒控制信号选择 
+1：短按两次 
+0：长按 
+R/W 0 
+ 
+5  短按开关 boost 
+0: disable 
+1:enable 
+R/W 0 
+ 
+4:3  reserved   
+2  VIN 拔出后，是否开启 Boost 
+0：不开启， 
+1：开启 
+R/W 1 
+ 
+1  reserved R/W 0 
+ 
+0  Batlow 3.0V 低电关机使能 
+0： disable 
+1:  enable  
+RW 1 
+ 
+ 
+SYS_CTL2 
+寄存器地址= 0X02 
+Bit(s) Name Description R/W Reset 
+7:4  reserved   
+3:2  轻载关机时间设定 
+11:64S 
+10:16S 
+01:32S 
+00:8S 
+  
+1:0  reserved R/W 0 
+ 
+ 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 16 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+ 
+Charger_CTL0 
+寄存器地址=0x20 
+Bit(s) Name Description R/W Reset 
+7：2  Reserved   
+1:0  充电充满停止设置 
+11:4.2/4.305/4.35/4.395 
+10: 4.185/4.29/4.335/4.38 
+01: 4.17/4.275/4.32/4.365 
+00: 4.14/4.26/4.305/4.35 
+分别对应 4.2V/4.3V/4.35V/4.4V 的充电截止电压 
+建议使用 01 或者 00 档位 
+RW 10 
+ 
+ 
+Charger_CTL1 
+寄存器地址=0x21 
+Bit(s) Name Description R/W Reset 
+7:6  电池端停充电流检测 
+11:600mA 
+10: 500mA 
+01:400mA 
+00:200mA 
+ 
+IP5306 充饱检测先检测电流再检测电池电压
+（0X20bit1：0） 
+RW 01 
+5  reserved  0 
+ 
+4:2  充电欠压环设定（充电时输出端 VOUT 的电压 
+111：4.8 
+110：4.75 
+101：4.7 
+100：4.65 
+011：4.6 
+010：4.55 
+001：4.5 
+000：4.45 
+注： 在充电的时候IC 会检测输出 VOUT 的电压来
+自动调整充电电流，当 VOUT 的电压大于设置值
+时就以最大电流对充电充电，小于设定值时就自
+RW 101 
+F 
+                      IP5306-I2C 
+===== PAGE 17 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+动减小充电电流以维持此电压； 
+如果客户要求边充边放状态下可在输出端加采样
+电阻检测边充边放状态输出端的负载电流大于
+100mA 时可把欠压环设置为最高， 优先对外部负
+载充电 
+Charger_CTL1 
+寄存器地址=0x22 
+Bit(s) Name Description R/W Reset 
+7：4  Reserved  0000 
+3:2  电池电压设定 
+11：4.4 
+10：4.35v 
+01：4.3v 
+00:  4.2v 
+RW 00 
+ 
+1:0  恒压充电电压加压设置 
+11：加压 42mV 
+10：加压 28mV 
+01：加压 14mV 
+00:  不加压 
+注：4.30V/4.35V/4.4V 建议加压 14mV； 
+4.2V 建议加压 28mV； 
+RW 01 
+ 
+ 
+ 
+寄存器地址=0x23 
+Bit(s) Name Description R/W Reset 
+7：6  Reserved   
+5  充电恒流环路选择： 
+1：VIN 端 CC 恒流 
+0：BAT 端 CC 恒流 
+RW 1 
+ 
+4:0  Reserved RW  
+ 
+CHG_DIG_CTL0 
+寄存器地址=0x24 
+Bit(s) Name Description R/W Reset 
+7：5  Reserved   
+4:0 
+ 
+ Charger(VIN 端)电流设置： 
+I=0.05+b0*0.1+b1*0.2+b2*0.4+b3*0.8+b4*1.6A 
+RW  
+                      IP5306-I2C 
+===== PAGE 18 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+REG_READ0 
+寄存器地址= 0X70 
+Bit(s) Name Description R/W Reset 
+7：4  Reserved R  
+3 
+charge_en 
+充电使能标志 
+1：充电开启 
+0：充电关闭 
+R  
+2：0  Reserved R  
+ 
+REG_READ1 
+寄存器地址= 0X71 
+Bit(s) Name Description R/W Reset 
+7:4  Reserved R X 
+3  充满标志位 
+0: 还在充电 
+1: 已经充满 
+R X 
+2：0  Reserved R X 
+ 
+REG_READ2 
+寄存器地址= 0X72 
+Bit(s) Name Description R/W Reset 
+7:3  Reserved R X 
+2  
+输出轻载标志位 
+0：重负载 
+1：轻负载 
+R X 
+1:0  Reserved R X 
+REG_READ3 
+Offset = 0X77 
+Bit(s) Name Description R/W Reset 
+7：3     
+                      IP5306-I2C 
+===== PAGE 19 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+2 KEY 按键双击标志 为 1，表明发生过双击按键 
+写 1 清零 
+R/W 0 
+1 KEY 按键长按标志 为 1，表明发生过长按按键 
+写 1 清零 
+R/W 0 
+0 KEY 按键短按标志 为 1，表明发生过短按按键 
+写 1 清零 
+R/W 0 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+                      IP5306-I2C 
+===== PAGE 20 =====
+V1.21                                                                   Copyright © 2017, injoinic Crop.                                                                                                                  
+4、责任及版权申明 
+英集芯科技有限公司有权对所提供的产品和服务进行更正、修改、增强、改进或其它更改， 客户在下
+订单前应获取最新的相关信息, 并验证这些信息是否完整且是最新的。所有产品的销售都遵循在订单确认时
+所提供的销售条款与条件。 
+       英集芯科技有限公司对应用帮助或客户产品设计不承担任何义务。客户应对其使用英集芯的产品和应
+用自行负责。为尽量减小与客户产品和应用相关的风险，客户应提供充分的设计与操作安全验证。 
+       客户认可并同意，尽管任何应用相关信息或支持仍可能由英集芯提供，但他们将独力负责满足与其产
+品及在其应用中使用英集芯产品相关的所有法律、法规和安全相关要求。客户声明并同意，他们具备制定
+与实施安全措施所需的全部专业技术和知识，可预见故障的危险后果、监测故障及其后果、降低有可能造
+成人身伤害的故障的发生机率并采取适当的补救措施。客户将全额赔偿因在此类关键应用中使用任何英集
+芯产品而对英集芯及其代理造成的任何损失。 
+       对于英集芯的产品手册或数据表，仅在没有对内容进行任何篡改且带有相关授权、条件、限制和声明
+的情况下才允许进行复制。英集芯对此类篡改过的文件不承担任何责任或义务。复制第三方的信息可能需
+要服从额外的限制条件。 
+       英集芯会不定期更新本文档内容，产品实际参数可能因型号或者其他事项不同有所差异，本文档不作
+为任何明示或暗示的担保或授权。 
+       在转售英集芯产品时，如果对该产品参数的陈述与英集芯标明的参数相比存在差异或虚假成分，则会
+失去相关英集芯产品的所有明示或暗示授权，且这是不正当的、欺诈性商业行为。英集芯对任何此类虚假
+陈述均不承担任何责任或义务。 
+ 
+ 
+                      IP5306-I2C 

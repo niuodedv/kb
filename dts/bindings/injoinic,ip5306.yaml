@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+description: |
+  Injoinic IP5306 power management IC (custom I2C variant, eSOP8).
+
+compatible: "injoinic,ip5306"
+
+include: i2c-device.yaml
+
+properties:
+  wakeup-gpios:
+    type: phandle-array
+    description: |
+      GPIO connected to the IP5306 KEY pin, used to emit a keepalive / wake
+      pulse (short press) so the PMIC does not enter light-load standby.
+      The active level is set by the GPIO flag (default low-active).

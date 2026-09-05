@@ -5,6 +5,7 @@
 #include "led/led.h"
 #include "mode/mode.h"
 #include "knob/knob.h"
+#include "power/ip5306.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -35,6 +36,12 @@ int main(void)
 	err = kb_knob_init();
 	if (err) {
 		LOG_ERR("旋钮模块初始化失败: %d", err);
+		return err;
+	}
+
+	err = ip5306_init();
+	if (err) {
+		LOG_ERR("电源管理(IP5306)初始化失败: %d", err);
 		return err;
 	}
 

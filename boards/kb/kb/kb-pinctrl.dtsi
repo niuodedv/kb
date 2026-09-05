@@ -29,4 +29,24 @@
 			low-power-enable;
 		};
 	};
+
+	/*
+	 * IP5306-I2C：SCL=P0.24 / SDA=P1.00（跨 GPIO 端口，nRF TWIM 支持）。
+	 * 板上已有 10k 上拉，这里再开内部上拉加强上升沿。
+	 */
+	i2c0_default: i2c0_default {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 0, 24)>,
+				<NRF_PSEL(TWIM_SDA, 1, 0)>;
+			bias-pull-up;
+		};
+	};
+
+	i2c0_sleep: i2c0_sleep {
+		group1 {
+			psels = <NRF_PSEL(TWIM_SCL, 0, 24)>,
+				<NRF_PSEL(TWIM_SDA, 1, 0)>;
+			low-power-enable;
+		};
+	};
 };

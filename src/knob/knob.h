@@ -29,9 +29,10 @@ enum kb_knob_dir {
  * @brief 旋转回调：每累计 1 档(detent) 触发一次
  *
  * @param dir    本档方向
- * @param step   本档净步数（恒为 +2 或 -2，等价于 ±1 档）
- * @param total  当前累计步数（带符号，跨圈连续；1 圈 = 60 步）
- * @param angle  当前累计角度（度，= total * 6，可超过 360）
+ * @param step   本次格位的净步数（清洁信号下恒为 +4 或 -4，等价于 ±1 格）
+ * @param total  本次旋转累计步数（带符号；停转超过 KNOB_IDLE_MS 自动清零，
+ *               故表示“本次旋转”角度，而非从上电一直累加；1 圈 = 60 步）
+ * @param angle  本次旋转累计角度（度，= total * 360 / STEPS_PER_REV，单次旋转通常 < 360）
  * @param user_data
  */
 typedef void (*kb_knob_cb_t)(enum kb_knob_dir dir, int16_t step,
@@ -48,12 +49,12 @@ int kb_knob_init(void);
 
 /**
  * @brief 查询当前累计步数（非阻塞，原子读）
- * @return 带符号累计步数（1 圈 = 60 步）
+ * @return 本次旋转累计步数（停转超过 KNOB_IDLE_MS 后清零；1 圈 = 60 步）
  */
 int32_t kb_knob_get_steps(void);
 
 /**
- * @brief 查询当前累计角度（度），等同 steps * 6
+ * @brief 查询当前累计角度（度），等同 steps * 6（本次旋转，停转后清零）
  */
 int32_t kb_knob_get_angle(void);
 

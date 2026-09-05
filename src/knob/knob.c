@@ -35,9 +35,6 @@
 
 LOG_MODULE_REGISTER(knob, LOG_LEVEL_INF);
 
-/* 调试开关：上板定位「旋转无打印」时打开，稳定后删除本段与 KNOB_DIAG 相关代码 */
-#define KNOB_DIAG 1
-
 /* ---- A/B 两相 GPIO（固定引脚，板级硬连线）----
  * EC11 A=P0.10(gpio0.10)、B=P1.06(gpio1.6)，均为对公共端 C(接地) 通断的触点，
  * 需上拉：默认 nRF 内部上拉；若原理图已有外部上拉电阻，把 GPIO_PULL_UP 去掉即可。
@@ -58,8 +55,16 @@ static const int8_t qem_table[16] = {
 };
 
 /* ---- 参数 ---- */
-#define STEPS_PER_DETENT 2      /* 1 档 = 2 步 */
-#define DEG_PER_STEP     6      /* 1 步 = 6°（360 / (4*15)）*/
+/* 本板 EC11：手感 20 格/圈，每格 = 4 个正交边沿 = 4 步（实测一次手感格产生 4 步）。
+ * 故一圈 = 20 格 × 4 步 = 80 步；每步 = 360/80 = 4.5°（非整数，改用有理数算法避免误差）。
+ * 1 格触发一次档事件：STEPS_PER_DETENT = 4 => 每格 18°。
+ * 若上板实测一圈事件数不是 20（或每格角度不是 18°），按实际手感格数改 DETENTS_PER_REV。 */
+#define DETENTS_PER_REV  20     /* 手感一圈的格数 */
+#define STEPS_PER_DETENT 4      /* 1 格(一次手感咔哒) = 4 步 */
+#define STEPS_PER_REV    (STEPS_PER_DETENT * DETENTS_PER_REV)  /* 80 步/圈 */
+/* 步数 -> 角度(度)：steps * 360 / STEPS_PER_REV，用 64 位防溢出；整格时恒为整数 */
+#define KNOB_ANGLE(steps) ((int32_t)((int64_t)(steps) * 360 / STEPS_PER_REV))
+#define KNOB_IDLE_MS     500    /* 停止转动超过此时长则认为本次旋转结束并清零累计 */
 #define CB_SLOTS         4
 
 struct cb_entry {
@@ -86,26 +91,7 @@ static struct k_mutex cb_lock;       /* 保护 cbs[]（注册在初始化线程�
 static struct gpio_callback a_cb;
 static struct gpio_callback b_cb;
 static struct k_work detent_work;
-
-#ifdef KNOB_DIAG
-static atomic_t g_transitions = ATOMIC_INIT(0);   /* ISR 累计的引脚跳变次数 */
-static struct k_work_delayable diag_work;
-
-/* 每 3 秒打印一次原始 A/B 电平与跳变数，用于判断「引脚到底有没有在动」 */
-static void diag_work_handler(struct k_work *work)
-{
-	static int last_tr;
-	int a = gpio_pin_get(a_port, KNOB_A_PIN);
-	int b = gpio_pin_get(b_port, KNOB_B_PIN);
-	int tr = (int)atomic_get(&g_transitions);
-
-	LOG_INF("旋钮诊断: A=%d B=%d 累计步=%d 角度=%d 旧态=%d 近3s跳变=%d",
-		a, b, kb_knob_get_steps(), kb_knob_get_angle(), old_state, tr - last_tr);
-	last_tr = tr;
-
-	k_work_schedule(k_work_delayable_from_work(work), K_SECONDS(3));
-}
-#endif
+static struct k_work_delayable idle_work;   /* 停转超时后清零“本次旋转”累计 */
 
 /* 上板手动查询：在 RTT shell 里输入 knob 即可看到当前 A/B 原始电平 */
 static int cmd_knob(const struct shell *sh, size_t argc, char **argv)
@@ -138,7 +124,7 @@ int32_t kb_knob_get_steps(void)
 
 int32_t kb_knob_get_angle(void)
 {
-	return (int32_t)atomic_get(&total_steps) * DEG_PER_STEP;
+	return KNOB_ANGLE((int32_t)atomic_get(&total_steps));
 }
 
 void kb_knob_reset(void)
@@ -167,8 +153,6 @@ static void knob_isr_handler(void)
 		return;  /* 读数异常，忽略本次 */
 	}
 
-	atomic_inc(&g_transitions);
-
 	new_state = (uint8_t)(((a != 0) << 1) | (b != 0));
 
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -182,13 +166,12 @@ static void knob_isr_handler(void)
 
 		if ((detent_acc >= STEPS_PER_DETENT) ||
 		    (detent_acc <= -STEPS_PER_DETENT)) {
-			/* 凑满一档：方向取净符号，step 记 ±2 */
+			/* 凑满一档：方向取净符号，step 记本次实际净步数 */
 			ev_dir   = (detent_acc > 0) ? KB_KNOB_CW : KB_KNOB_CCW;
-			ev_step  = (int16_t)(detent_acc > 0 ? STEPS_PER_DETENT
-							 : -STEPS_PER_DETENT);
+			ev_step  = (int16_t)detent_acc;   /* 实际净步数（清洁信号下恒为 ±4）*/
 			ev_total = (int32_t)atomic_get(&total_steps);
-			ev_angle = ev_total * DEG_PER_STEP;
-			detent_acc = 0;  /* 余数为 0（一档恰好 2 步）*/
+			ev_angle = KNOB_ANGLE(ev_total);
+			detent_acc = 0;  /* 清零档内余数，开始下一档计数 */
 			fire = true;
 		}
 	}
@@ -218,14 +201,23 @@ static void knob_b_cb(const struct device *port, struct gpio_callback *cb, uint3
 	knob_isr_handler();
 }
 
+/* 空闲超时：旋钮停止转动超过 KNOB_IDLE_MS 后清空“累计”，
+ * 使 累计角/累计步 表示“本次旋转”的角度，而非从上电一直累加。 */
+static void idle_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+	kb_knob_reset();
+	LOG_DBG("旋钮静止，累计已清零（下次旋转从 0 起算）");
+}
+
 /* 工作项：在系统工作队列里打印日志 + 派发订阅者（不阻塞 ISR）*/
 static void detent_work_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-	LOG_INF("旋钮 方向=%s 本次=%d° 累计步=%d 累计角=%d°",
+	LOG_INF("旋钮 方向=%s 本次=%d° 累计步=%d 累计角=%d°（本次旋转）",
 		kb_knob_dir_name(ev_dir),
-		(int)ev_step * DEG_PER_STEP, ev_total, ev_angle);
+		(int)KNOB_ANGLE(ev_step), ev_total, ev_angle);
 
 	k_mutex_lock(&cb_lock, K_FOREVER);
 	for (int i = 0; i < CB_SLOTS; i++) {
@@ -234,6 +226,9 @@ static void detent_work_handler(struct k_work *work)
 		}
 	}
 	k_mutex_unlock(&cb_lock);
+
+	/* 每次旋转活动都重置“停止”计时窗口，超时即清零累计 */
+	k_work_reschedule(&idle_work, K_MSEC(KNOB_IDLE_MS));
 }
 
 int kb_knob_register_cb(kb_knob_cb_t cb, void *user_data)
@@ -312,11 +307,9 @@ int kb_knob_init(void)
 
 	k_mutex_init(&cb_lock);
 	k_work_init(&detent_work, detent_work_handler);
-
-#ifdef KNOB_DIAG
-	k_work_init_delayable(&diag_work, diag_work_handler);
-	k_work_schedule(&diag_work, K_NO_WAIT);
-#endif
+	k_work_init_delayable(&idle_work, idle_work_handler);
+	/* 先装好停转计时窗口（空闲到点清零，无活动也只是把 0 再清一次）*/
+	k_work_schedule(&idle_work, K_MSEC(KNOB_IDLE_MS));
 
 	gpio_init_callback(&a_cb, knob_a_cb, BIT(KNOB_A_PIN));
 	gpio_init_callback(&b_cb, knob_b_cb, BIT(KNOB_B_PIN));
