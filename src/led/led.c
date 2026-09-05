@@ -43,7 +43,7 @@ static const struct device *const vcc   = DEVICE_DT_GET(VCC_NODE);
 #define ANIM_PERIOD_MS     16    /* 渐灭动画节拍，约 60fps */
 #define LED_PWR_STABLE_MS  1     /* 灯带 VCC 上电后的稳定等待 */
 #define LED_CH_MA          20    /* WS2812 单个颜色通道满亮度电流(mA) */
-#define LED_BUDGET_MA      400   /* 全灯链总电流预算(mA)，超出则整体按比例限幅 */
+#define LED_BUDGET_MA      200   /* 全灯链总电流预算(mA)，超出则整体按比例限幅 */
 #define FADE_MS_MAX        5000
 
 /* ---- 每颗灯的状态 ---- */
@@ -82,10 +82,10 @@ static struct led_state leds[KB_LED_COUNT];
 
 /* 默认：纯绿、满亮度、按下亮/松手渐灭、渐灭 250ms */
 static struct kb_led_config cfg = {
-	.r = 0,
-	.g = 255,
-	.b = 0,
-	.brightness = 255,
+	.r = 189,
+	.g = 48,
+	.b = 57,
+	.brightness = 128,
 	.effect = KB_LED_EFFECT_DEFAULT,
 	.fade_ms = 250,
 };
