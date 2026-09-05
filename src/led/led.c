@@ -82,9 +82,9 @@ static struct led_state leds[KB_LED_COUNT];
 
 /* 默认：纯绿、满亮度、按下亮/松手渐灭、渐灭 250ms */
 static struct kb_led_config cfg = {
-	.r = 189,
-	.g = 48,
-	.b = 57,
+	.r = 0x66,
+	.g = 0xcc,
+	.b = 0xff,
 	.brightness = 128,
 	.effect = KB_LED_EFFECT_DEFAULT,
 	.fade_ms = 250,
