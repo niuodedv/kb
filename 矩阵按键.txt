@@ -1,0 +1,454 @@
+================================================================
+矩阵按键（6 行 × 4 列 稀疏矩阵）实现方案
+================================================================
+版本：V1.0
+日期：2026-09-04
+平台：nRF Connect SDK v3.2.3 / Zephyr 4.2.99 / 板卡 kb（nRF52840）
+依据：SCH_蓝牙小键盘_2026-03-28.pdf
+范围：只做"按键检测"这一层（物理按键 → 标准键值事件）
+      不含 HID 上报 / LED / 屏幕 / 模式切换
+说明：本文件只给方案、配置草案与验证方法，不含实现代码
+
+----------------------------------------------------------------
+一、结论（一句话）
+----------------------------------------------------------------
+直接用 Zephyr 官方驱动组合：
+    gpio-kbd-matrix（行列扫描）  +  input-keymap（行列坐标 → 标准键值）
+应用层用 INPUT_CALLBACK_DEFINE 接收标准 input 事件。不自己写扫描代码。
+
+为什么用官方驱动：
+ 1. 已内置：中断/轮询/连续扫描三种空闲模式、逐键独立去抖（按下/松手分开）、
+    列切换稳定时间、鬼键检测、稀疏矩阵掩码（actual-key-mask）、PM 挂起/恢复。
+ 2. 为什么不是老教程里的 kscan：本 SDK（Zephyr 4.2.99）已彻底移除 kscan 子系统，
+    CONFIG_KSCAN 不存在，compatible "zephyr,kscan-gpio-matrix" 全盘搜索 0 命中。
+ 3. 官方权威文档（可直接查阅）：
+    D:/ncs/v3.2.3/zephyr/doc/services/input/gpio-kbd.rst
+    参考用例：D:/ncs/v3.2.3/zephyr/tests/drivers/input/gpio_kbd_matrix/
+    （本方案的驱动行为、事件格式、去抖语义，全部以该用例与上述文档为准）
+
+----------------------------------------------------------------
+二、硬件事实（方案依据）
+----------------------------------------------------------------
+2.1 引脚与方向
+
+  | 信号 | nRF GPIO | 本驱动语义       |
+  |------|----------|------------------|
+  | ROW0 | P0.15    | 输入（被读取）   |
+  | ROW1 | P0.07    | 输入（被读取）   |
+  | ROW2 | P0.12    | 输入（被读取）   |
+  | ROW3 | P0.04    | 输入（被读取）   |
+  | ROW4 | P1.09    | 输入（被读取）   |
+  | ROW5 | P0.08    | 输入（被读取）   |
+  | COL0 | P0.05    | 输出（被驱动）   |
+  | COL1 | P0.06    | 输出（被驱动）   |
+  | COL2 | P0.26    | 输出（被驱动）   |
+  | COL3 | P0.30    | 输出（被驱动）   |
+
+  ⚠️ 与直觉相反：本驱动是"列驱动、行读取"。官方文档原话：
+     "the driver reads on the row GPIOs (inputs) and selects on the columns
+      GPIOs (output)"。
+     所以设备树里 row-gpios 必须填 ROW0~ROW5，col-gpios 填 COL0~COL3，不能互换。
+
+2.2 矩阵占用表（✓ = 有按键，— = 空位）
+
+        | COL0 | COL1 | COL2 | COL3 |
+  ------|------|------|------|------|
+  ROW0  |  —   |  —   |  —   |  ✓   |   ← EC11 旋钮按键（经 D20 1N4148W 隔离）
+  ROW1  |  ✓   |  ✓   |  ✓   |  ✓   |   ← 4 个（CBB1~CBB4）
+  ROW2  |  ✓   |  ✓   |  ✓   |  —   |   ← 3 个（CBB5~CBB7）
+  ROW3  |  ✓   |  ✓   |  ✓   |  ✓   |   ← 4 个（CBB8~CBB11）
+  ROW4  |  ✓   |  ✓   |  ✓   |  —   |   ← 3 个（CBB12~CBB14）
+  ROW5  |  ✓   |  ✓   |  —   |  ✓   |   ← 3 个（CBB15~CBB17，注意空缺在 COL2）
+
+  合计 18 个物理位置 = 17 个机械轴 + 1 个 EC11 编码器按键（ROW0/COL3）。
+  【待确认】若"17 个按键"的口径已包含编码器，则还有一处空位未说明，需再确认。
+
+2.3 二极管方向与极性（已按原理图符号确认，这是驱动能否工作的关键）
+
+  每个按键串联 1 只 1N4148W（D1~D19，编码器为 D20），方向为"列 → 行"：
+      COL（列）→ 开关 → 二极管（阳极在开关侧）→ ROW（行，阴极侧）
+
+  官方驱动文档对应条款：
+      "Matrixes with diodes going from columns to rows must use pull-downs on
+       rows and active high columns."
+
+  因此配置为：
+      行 row-gpios ：GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH
+      列 col-gpios ：GPIO_ACTIVE_HIGH（选中时驱动为高电平）
+      按下时行读到高电平 = active = 按下
+
+  【待确认】焊接/回板后先用万用表或原理图复核 D1 阴极确实朝向 ROW1。
+  若朝向相反，改用备选配置（见 10.1）。
+
+----------------------------------------------------------------
+三、软件架构与数据流
+----------------------------------------------------------------
+
+  [物理按键] 硬件：列驱动高 / 行下拉 / 二极管"列→行"
+      │
+      ▼
+  [驱动 1] gpio-kbd-matrix        DT compatible = "gpio-kbd-matrix"
+      ├─ 逐列扫描、逐键独立去抖（按下 debounce-down、松手 debounce-up）
+      ├─ actual-key-mask 过滤不存在的交叉点
+      ├─ 空闲时进入低功耗（行 GPIO 中断），按下即唤醒扫描线程
+      └─ 上报：INPUT_ABS_X = 列，INPUT_ABS_Y = 行，INPUT_BTN_TOUCH = 按下(1/0)
+           （三个事件为一组，最后一个带 sync 标志，应用层按 sync 收尾）
+      │
+      ▼  （input 子系统把事件分发给已注册的回调）
+  [驱动 2] input-keymap            DT 子节点 compatible = "input-keymap"
+      ├─ 用 MATRIX_KEY(row, col, code) 表把 (行,列,按下) 翻译成标准键值
+      ├─ 表中未定义或为 0 的坐标直接丢弃
+      └─ 上报：INPUT_EV_KEY，code = INPUT_KEY_xxx，value = 0/1（自带 sync）
+      │
+      ▼
+  [应用层] INPUT_CALLBACK_DEFINE(keymap_dev, cb, NULL)
+      ├─ cb 收到 struct input_event { .type, .code, .value, .sync }
+      └─ 在这里接 CAF：提交 button_event{key_id, pressed}
+
+  为什么 keymap 要单独一层：
+   - 驱动只认"行列坐标"，应用只认"键码"，中间这层官方已提供；
+     改键位只改设备树，不用改驱动和 C 代码。
+   - 空位在 keymap 表里天然为 0，等于对 6 个不存在的交叉点做了第二道过滤
+     （第一道是 actual-key-mask），双保险。
+
+----------------------------------------------------------------
+四、设备树配置草案
+----------------------------------------------------------------
+放置位置：建议放在工程根目录 kb.overlay（构建系统按板名自动识别），
+或在硬件定型后并入 boards/kb/kb/kb.dts。
+
+    / {
+        kbd_matrix: kbd-matrix {
+            compatible = "gpio-kbd-matrix";
+            status = "okay";
+
+            /* 行 = 输入（被读取），顺序必须 ROW0 → ROW5 */
+            row-gpios = <&gpio0 15 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>,  /* ROW0 */
+                        <&gpio0  7 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>,  /* ROW1 */
+                        <&gpio0 12 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>,  /* ROW2 */
+                        <&gpio0  4 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>,  /* ROW3 */
+                        <&gpio1  9 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>,  /* ROW4 */
+                        <&gpio0  8 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;  /* ROW5 */
+
+            /* 列 = 输出（被驱动高），顺序必须 COL0 → COL3 */
+            col-gpios = <&gpio0  5 GPIO_ACTIVE_HIGH>,   /* COL0 */
+                        <&gpio0  6 GPIO_ACTIVE_HIGH>,   /* COL1 */
+                        <&gpio0 26 GPIO_ACTIVE_HIGH>,   /* COL2 */
+                        <&gpio0 30 GPIO_ACTIVE_HIGH>;   /* COL3 */
+
+            /* 每键都有隔离二极管 ⇒ 关鬼键检测（支持任意多键同按）、
+               未选中列直接驱动为无效电平、无需列切换稳定延时 */
+            col-drive-inactive;
+            no-ghostkey-check;
+            settle-time-us = <0>;
+
+            /* 稀疏矩阵掩码：每列一个 8 位行掩码，长度必须等于列数(4) */
+            actual-key-mask = <0x3E 0x3E 0x1E 0x2B>;
+
+            /* 空闲策略：无按键时行 GPIO 挂中断，松手后 100ms 回到中断态 */
+            idle-mode = "interrupt";
+            poll-period-ms = <5>;
+            poll-timeout-ms = <100>;
+            debounce-down-ms = <10>;
+            debounce-up-ms   = <20>;
+
+            kbd_keymap: keymap {
+                compatible = "input-keymap";
+                row-size = <6>;
+                col-size = <4>;
+                keymap = <
+                    MATRIX_KEY(0, 3, INPUT_KEY_MUTE)
+                    MATRIX_KEY(1, 0, INPUT_KEY_NUMLOCK)
+                    MATRIX_KEY(1, 1, INPUT_KEY_KPSLASH)
+                    MATRIX_KEY(1, 2, INPUT_KEY_KPASTERISK)
+                    MATRIX_KEY(1, 3, INPUT_KEY_KPMINUS)
+                    MATRIX_KEY(2, 0, INPUT_KEY_KP7)
+                    MATRIX_KEY(2, 1, INPUT_KEY_KP8)
+                    MATRIX_KEY(2, 2, INPUT_KEY_KP9)
+                    MATRIX_KEY(3, 0, INPUT_KEY_KP4)
+                    MATRIX_KEY(3, 1, INPUT_KEY_KP5)
+                    MATRIX_KEY(3, 2, INPUT_KEY_KP6)
+                    MATRIX_KEY(3, 3, INPUT_KEY_KPPLUS)
+                    MATRIX_KEY(4, 0, INPUT_KEY_KP1)
+                    MATRIX_KEY(4, 1, INPUT_KEY_KP2)
+                    MATRIX_KEY(4, 2, INPUT_KEY_KP3)
+                    MATRIX_KEY(5, 0, INPUT_KEY_KP0)
+                    MATRIX_KEY(5, 1, INPUT_KEY_KPDOT)
+                    MATRIX_KEY(5, 3, INPUT_KEY_KPENTER)
+                >;
+            };
+        };
+    };
+
+overlay 顶部需要两个头文件：
+    #include <zephyr/dt-bindings/input/input-event-codes.h>   /* INPUT_KEY_* */
+    #include <zephyr/dt-bindings/input/keymap.h>              /* MATRIX_KEY  */
+
+要点逐条解释：
+ 1. row-gpios / col-gpios 的书写顺序即索引顺序。ROW0 必须是第 0 个，
+    否则与实际硬件错位。
+ 2. actual-key-mask 推导（bit n = ROWn 是否存在）：
+        COL0：ROW1,2,3,4,5 → 0b00111110 = 0x3E
+        COL1：ROW1,2,3,4,5 → 0b00111110 = 0x3E
+        COL2：ROW1,2,3,4   → 0b00011110 = 0x1E
+        COL3：ROW0,1,3,5   → 0b00101011 = 0x2B
+    置位总数 = 5+5+4+4 = 18，与 2.2 表一致。
+    （可用官方 shell 命令实测后直接回填，见 9.2）
+ 3. no-ghostkey-check：每键都有隔离二极管，物理上不可能鬼键。
+    若不关，驱动会在多键同按时误判鬼键而丢弃事件。
+ 4. col-drive-inactive + settle-time-us = <0>：官方对"带隔离二极管矩阵"的推荐。
+    未选中列被驱动为无效电平（低），行列状态无需等待稳定，扫描更快。
+    若调试期间发现串键/误触发，先把 settle-time-us 改回 50 再排查。
+ 5. idle-mode = "interrupt"：无按键时 6 个行 GPIO 挂中断，CPU 可深度睡眠，
+    按下任意键即唤醒。poll-timeout-ms=100 表示松手 100ms 后退回中断态。
+ 6. kbd_keymap 必须是 kbd-matrix 的【子节点】（驱动用 DT_INST_PARENT 取父设备）。
+
+----------------------------------------------------------------
+五、Kconfig 配置草案（prj.conf）
+----------------------------------------------------------------
+    # ---- 调试与日志（板子未引出串口，用 RTT，无需飞线） ----
+    CONFIG_GPIO=y
+    CONFIG_LOG=y
+    CONFIG_LOG_MODE_MINIMAL=y
+    CONFIG_USE_SEGGER_RTT=y
+    CONFIG_LOG_BACKEND_RTT=y
+    CONFIG_SHELL=y
+    CONFIG_SHELL_BACKEND_RTT=y
+
+    # ---- 输入子系统（核心，只此一项即可） ----
+    CONFIG_INPUT=y
+    # 下面两项由设备树自动打开，无需显式写（写了也无害）：
+    #   CONFIG_INPUT_GPIO_KBD_MATRIX  default y，depends on DT_HAS_GPIO_KBD_MATRIX_ENABLED
+    #   CONFIG_INPUT_KEYMAP           default y，depends on DT_HAS_INPUT_KEYMAP_ENABLED
+    #
+    # 事件投递默认走独立线程（INPUT_MODE_THREAD，队列 16 条、栈 1024B）。
+    # 快速连打时若发现丢事件，再调大队列：
+    #   CONFIG_INPUT_QUEUE_MAX_MSGS=32
+    #   CONFIG_INPUT_THREAD_STACK_SIZE=1536
+
+    # ---- bring-up 验证用（验证完可关） ----
+    CONFIG_INPUT_EVENT_DUMP=y                 # 用日志打印所有 input 事件
+    CONFIG_INPUT_SHELL=y                      # 打开 shell 的 input 子命令
+    CONFIG_INPUT_SHELL_KBD_MATRIX_STATE=y     # 打开矩阵状态观察命令
+
+补充说明：
+ - 扫描线程自身的参数：CONFIG_INPUT_KBD_MATRIX_THREAD_STACK_SIZE（默认 1024）、
+   CONFIG_INPUT_KBD_MATRIX_THREAD_PRIORITY（默认 0，协作式）。
+   矩阵 6×4 + 后续 CAF 事件提交，1024 字节够用；不够再调。
+ - 行数上限：默认 8（kbd_row_t 为 uint8_t）；本设计 6 行，无需开
+   CONFIG_INPUT_KBD_MATRIX_16_BIT_ROW。
+
+----------------------------------------------------------------
+六、键值映射（keymap 表）
+----------------------------------------------------------------
+6.1 当前给出的映射（依原理图内嵌的键帽图例推导）
+
+  | (行,列) | 键帽      | INPUT_KEY_ 码         |
+  |---------|-----------|-----------------------|
+  | (0,3)   | EC11 按下 | INPUT_KEY_MUTE        |
+  | (1,0)   | NumLock   | INPUT_KEY_NUMLOCK     |
+  | (1,1)   | /         | INPUT_KEY_KPSLASH     |
+  | (1,2)   | *         | INPUT_KEY_KPASTERISK  |
+  | (1,3)   | -         | INPUT_KEY_KPMINUS     |
+  | (2,0)   | 7 / Home  | INPUT_KEY_KP7         |
+  | (2,1)   | 8 / ↑     | INPUT_KEY_KP8         |
+  | (2,2)   | 9 / PgUp  | INPUT_KEY_KP9         |
+  | (3,0)   | 4 / ←     | INPUT_KEY_KP4         |
+  | (3,1)   | 5         | INPUT_KEY_KP5         |
+  | (3,2)   | 6 / →     | INPUT_KEY_KP6         |
+  | (3,3)   | +         | INPUT_KEY_KPPLUS      |
+  | (4,0)   | 1 / End   | INPUT_KEY_KP1         |
+  | (4,1)   | 2 / ↓     | INPUT_KEY_KP2         |
+  | (4,2)   | 3 / PgDn  | INPUT_KEY_KP3         |
+  | (5,0)   | 0 / Ins   | INPUT_KEY_KP0         |
+  | (5,1)   | . / Del   | INPUT_KEY_KPDOT       |
+  | (5,3)   | Enter     | INPUT_KEY_KPENTER     |
+
+6.2 【待确认】ROW5（第 6 行）三个键的键帽归属
+  原理图矩阵中 ROW5 占用 COL0、COL1、COL3（缺 COL2），与键帽图例无法完全对齐。
+  必须以实物/丝印为准。确认方法见 9.2：逐个按键，用 shell 命令读出 (行,列)，
+  再回填 keymap 表。keymap 表只改设备树，不用改代码，成本很低。
+
+6.3 NumLock 双功能层（本方案的边界说明）
+  键帽上有 10 个双功能键（7/Home、8/↑、9/PgUp、4/←、6/→、1/End、2/↓、3/PgDn、
+  0/Ins、./Del），需要 NumLock 状态切换。
+  input-keymap 只支持【一张静态表】（想要多张表就建多个 keymap 子节点），
+  因此建议：
+    - 设备树里的 keymap 只放"数字层"（即上表）；
+    - NumLock 关闭时的导航层（INPUT_KEY_HOME / UP / PAGEUP / LEFT / RIGHT /
+      END / DOWN / PAGEDOWN / INSERT / DELETE），放在应用层的键码转换表里做；
+    - 后续还要接收主机 HID Output Report 的 Num Lock LED 位来同步状态。
+  这一步属于 HID 层，不在本方案范围内，但 keymap 设计必须为此留好接口。
+
+----------------------------------------------------------------
+七、应用层接入（接口约定，不含代码）
+----------------------------------------------------------------
+7.1 取句柄与注册
+  - 用 DEVICE_DT_GET(DT_NODELABEL(kbd_keymap)) 取 keymap 设备句柄；
+  - 用 INPUT_CALLBACK_DEFINE(dev, cb, NULL) 注册（编译期注册，无需运行时调用）；
+    dev 传 NULL 表示接收所有设备事件，建议传 keymap 设备只收键值事件。
+  - 回调签名：static void cb(struct input_event *evt, void *user_data)
+    evt->type = INPUT_EV_KEY，evt->code = INPUT_KEY_xxx，evt->value = 0/1，
+    evt->sync 表示本次上报结束（keymap 每次上报都自带 sync）。
+
+7.2 key_id 约定（给后续 LED / HID 用）
+  建议应用层定义连续的逻辑键编号 key_id：
+      key_id = row * 4 + col        （0 ~ 23，空位不分配）
+  或者用"链路顺序号"作为 LED 索引（见 8.4）。
+  ⚠️ 三者不要混用：矩阵下标 / 键码（INPUT_KEY_*）/ LED 链路索引。
+
+7.3 接 CAF
+  - 本版本 CAF 没有 keypad 模块，也没有模块消费 input 事件，
+    必须在回调里自己把事件转成 CAF 事件：
+        struct button_event { uint16_t key_id; bool pressed; }
+    （头文件 nrf/include/caf/events/button_event.h）
+  - 好处：后续的 leds / power_manager 模块可以直接订阅 button_event，
+    例如按键按下时提交 keep_alive 事件抑制休眠。
+
+----------------------------------------------------------------
+八、参数标定建议
+----------------------------------------------------------------
+  | 参数                  | 建议值 | 说明与调法                                    |
+  |-----------------------|--------|-----------------------------------------------|
+  | poll-period-ms        | 5      | 扫描周期。有按键活动时的采样间隔，5ms 足够     |
+  | poll-timeout-ms       | 100    | 松手后多久回到中断态。调大=更灵敏、更耗电      |
+  | debounce-down-ms      | 10     | 按下去抖。机械轴一般 5~15ms，默认 10          |
+  | debounce-up-ms        | 20     | 松手去抖。默认 20，松手抖动通常更大            |
+  | settle-time-us        | 0      | 带二极管 + col-drive-inactive 时可取 0；       |
+  |                       |        | 若出现串键先改回 50 排查                       |
+  | stable-poll-period-ms | 不设   | 默认等于 poll-period-ms。想更省电可设大一些，  |
+  |                       |        | 例如 10ms（矩阵稳定时降低扫描频率）            |
+  | idle-mode             | interrupt | 最低功耗；见 10.2 的 GPIOTE 通道预算        |
+  | INPUT_QUEUE_MAX_MSGS  | 16(默认)| 快速连打丢事件时调到 32                       |
+
+  低功耗提示：
+   - "interrupt" 模式下，空闲时行 GPIO 挂边沿中断，扫描线程挂起，
+     CPU 可进入睡眠；这是本硬件唯一合理的空闲策略。
+   - 设备支持 PM 挂起（input_kbd_matrix_pm_action），挂起期间扫描结果强制为全 0，
+     不会误报事件；将来进 System Off 前应先挂起该设备。
+   - 当前 .config 里 CONFIG_PM_DEVICE 未开，低功耗阶段再统一打开。
+
+----------------------------------------------------------------
+九、验证方案
+----------------------------------------------------------------
+9.1 环境
+  - J-Link（板载 SWD）+ RTT Viewer 或 `west rtt`/JLinkRTTClient 看日志
+  - 万用表（用于复核二极管方向、量行/列电平）
+  - 逻辑分析仪（可选，抓列驱动/行读取时序）
+  - 后续接 HID 后再用 USBlyzer / Wireshark+USBPcap / 手机蓝牙抓包验证键值
+
+9.2 第 0 步：先不写应用代码，用官方 shell 直接验证硬件（强烈建议）
+  目标：先确认"行列接对了、二极管方向对了、掩码对不对"，再谈上层。
+
+  a) 确认设备就绪：
+       uart:~$ device list
+       应看到：kbd-matrix (READY)  以及 keymap 设备 (READY)
+
+  b) 观察矩阵状态（官方专门为 bring-up 提供的命令）：
+       uart:~$ input kbd_matrix_state_dump kbd-matrix
+       Keyboard state logging enabled for kbd-matrix
+       ... 每按一个键打印一行，类似：
+       <inf> input: kbd-matrix state [01 -- -- --] (1)
+       <inf> input: kbd-matrix state [-- -- -- --] (0)
+       —— 打印的是每个"列"上的行状态，按下的键会在对应列出现行号
+
+  c) 把 17 个机械轴 + 编码器按键【全部按一遍】后关闭：
+       uart:~$ input kbd_matrix_state_dump off
+       Keyboard state logging disabled
+       <inf> input: kbd-matrix key-mask [3e 3e 1e 2b] (18)
+       —— 输出的就是所有被检测到过的按键的 OR 掩码，
+          可直接复制回填到 actual-key-mask！这是核对本方案 0x3E/0x3E/0x1E/0x2B
+          最权威的方法；同时也确认了每个键实际落在哪个 (行,列)。
+
+  d) 观察键值事件（验证 keymap 是否正确）：
+       uart:~$ input dump on
+       按键后应看到 INPUT_EV_KEY + INPUT_KEY_xxx + value=1/0 的日志。
+       （前提：CONFIG_INPUT_EVENT_DUMP=y；用 shell 时需要先 input dump on）
+
+9.3 测试用例
+
+  编号  用例            方法                                  预期结果
+  --------------------------------------------------------------------------
+  M01   设备初始化      上电后 device list                    kbd-matrix、keymap 均 READY
+  M02   掩码正确        kbd_matrix_state_dump 全键按一遍      输出 3e 3e 1e 2b，共 18 个键
+  M03   行列不反        按 COL0 上的某键                      该键只出现在掩码的第 0 列
+  M04   极性正确        按下任一键                            行读到高电平，事件 value=1
+  M05   单键键值        逐个按 17 键 + 编码器                 每个键产生唯一的 INPUT_KEY_ 码，无重复
+  M06   按下/松开配对   快速点按 100 次                        按下与松开事件一一配对，无残留按下
+  M07   去抖            慢压、半按、抖动按压                  单次按压只产生一次 down/up
+  M08   多键同按        同时按 4~6 个键                        全部上报，无鬼键、无丢键（已关检测）
+  M09   空位不误报      逐列短接不存在的交叉点（飞线模拟）      不产生任何事件
+  M10   编码器按键      按下 EC11                             产生 INPUT_KEY_MUTE，与普通键不冲突
+  M11   空闲功耗        松手静置 > 100ms                       进入中断态，电流显著下降（PPK2 量）
+  M12   唤醒            任意键按下                            立即产生事件，延迟 < 10ms
+  M13   长稳            连续按键 1 小时                        无卡键、无重复、无丢失
+  M14   键帽核对        按每个实物键，对照 keymap 表           与实际键帽一致（对应 6.2 待确认项）
+
+9.4 验收标准
+  - M01、M02、M04、M05、M08、M09、M12 必须全绿，才允许进入 HID 层开发。
+  - 单键扫描延迟（按下到事件产生）≤ 去抖时间 + 一个扫描周期（约 10 + 5ms）。
+  - 空闲态（interrupt 模式）电流相对扫描态有明显下降，作为低功耗基线记录在案。
+
+----------------------------------------------------------------
+十、风险与注意事项
+----------------------------------------------------------------
+10.1 二极管方向如果反了
+  现象：完全读不到按键，或整行/整列同时触发。
+  备选配置（二极管"行 → 列"时用）：
+      row-gpios = <... (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>, ...
+      col-gpios = <... GPIO_ACTIVE_LOW>, ...
+      col-drive-inactive;  no-ghostkey-check;  settle-time-us = <0>;
+  判断方法：用万用表二极管档量 D1；或用 gpio shell 手动驱动一列、读一行实测。
+
+10.2 GPIOTE 通道预算（后续一定会遇到）
+  nRF52840 只有 8 个 GPIOTE 通道。
+  本方案 idle-mode="interrupt" 会占用 6 个（6 个行 GPIO）；
+  后面加 EC11 编码器 A/B 相还需要 2 个 —— 刚好耗尽。
+  应对：
+    (a) 矩阵改用 idle-mode = "poll"（不占中断，代价是空闲时定时轮询）；
+    (b) 编码器的 A/B 改用定时轮询或 QDEC 外设；
+    (c) 两者取其一用中断，另一个轮询。
+  建议先在矩阵上用 interrupt，等编码器接入时按实测功耗再决定。
+
+10.3 行列引脚不连续 → 驱动的两项"快速路径"不生效
+  驱动在"行引脚连续且同端口"时会自动改用整端口读取（direct_read），
+  在"列引脚连续且同端口 + col-drive-inactive"时用整端口写入（direct_write）。
+  本项目行（P0.15/P0.07/P0.12/P0.04/P1.09/P0.08）、列（P0.05/P0.06/P0.26/P0.30）
+  都不连续，两条优化都不生效。仅影响效率，不影响功能，无需处理。
+
+10.4 编码器按键在矩阵里
+  EC11 的按键在 ROW0/COL3，与机械键共用同一套去抖与上报。
+  注意：它的语义是"静音"，不是普通键盘字符，后续 HID 层要走 Consumer 报告，
+  在应用层按 key_id 单独分流即可，本层无需特殊处理。
+
+10.5 键帽与 (行,列) 的对应必须实测
+  尤其 ROW5。keymap 表只改设备树，改起来成本极低，不要凭图例硬猜。
+
+10.6 低功耗边界
+  本层只保证"空闲时进中断态"。将来进 System Off 时，矩阵设备停止扫描，
+  唤醒源必须是 6 个行 GPIO 之一（或后续接入的唤醒引脚），
+  且要在挂起前先发一次"全键释放"，避免主机端残留按键。
+
+----------------------------------------------------------------
+十一、实施步骤
+----------------------------------------------------------------
+  步骤 1  新建 kb.overlay，写入第四节的设备树（先按默认参数）
+  步骤 2  prj.conf 加入第五节配置（含 RTT 与 shell）
+  步骤 3  编译烧录，执行 9.2 的 a/b/c 三步，核对掩码与键位
+  步骤 4  若掩码与 0x3E/0x3E/0x1E/0x2B 不一致 → 以实测为准修正 actual-key-mask，
+          并回查原理图（多半是行/列写反或键位理解有偏差）
+  步骤 5  执行 9.2 d，确认 keymap 输出的 INPUT_KEY_ 码符合 6.1 表
+  步骤 6  跑完 9.3 的 M01~M12
+  步骤 7  全部通过后，再写应用层回调（INPUT_CALLBACK_DEFINE）并接 CAF
+          的 button_event，进入 HID 层开发
+
+----------------------------------------------------------------
+十二、本方案不覆盖的内容（下一步）
+----------------------------------------------------------------
+  - HID 上报（USB / BLE）与 NumLock 双功能层
+  - 按键 LED（WS2812 链路顺序与矩阵下标的映射）
+  - EC11 旋转解码（音量 + 静音，其按键已在本方案内覆盖）
+  - 屏幕显示、模式切换、上位机协议、低功耗与电池管理
+
+  相关约定已在本方案中预留：key_id 规则（7.2）、button_event 接口（7.3）。
+  详细的整机级设计见 蓝牙键盘方案.txt，硬件事实与引脚见 项目记事本.txt。

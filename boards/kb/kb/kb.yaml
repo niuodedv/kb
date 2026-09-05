@@ -1,0 +1,10 @@
+identifier: kb/nrf52840
+name: kb
+vendor: kb
+type: mcu
+arch: arm
+ram: 256
+flash: 1024
+toolchain:
+  - zephyr
+supported: []

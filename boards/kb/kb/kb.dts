@@ -1,0 +1,138 @@
+/dts-v1/;
+#include <nordic/nrf52840_qiaa.dtsi>
+#include "kb-pinctrl.dtsi"
+
+#include <zephyr/dt-bindings/gpio/gpio.h>
+#include <zephyr/dt-bindings/input/input-event-codes.h>
+#include <zephyr/dt-bindings/input/keymap.h>
+
+/ {
+	model = "kb";
+	compatible = "kb,kb";
+
+	chosen {
+		zephyr,sram = &sram0;
+		zephyr,flash = &flash0;
+		zephyr,code-partition = &slot0_partition;
+	};
+
+	/*
+	 * 6 行 x 4 列 按键矩阵（含 EC11 编码器按键）
+	 *
+	 * 驱动语义（与直觉相反）：列被驱动（输出），行被读取（输入）。
+	 * 硬件每键串联 1 只 1N4148W，方向为「列 -> 行」（阴极在行侧），
+	 * 因此：行下拉 + 高电平有效，列驱动为高电平有效。
+	 * 详见 矩阵按键.txt
+	 */
+	kbd_matrix: kbd-matrix {
+		compatible = "gpio-kbd-matrix";
+		status = "okay";
+
+		/* 行 = 输入（被读取）。顺序必须 ROW0 -> ROW5 */
+		row-gpios = <&gpio0 15 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>, /* ROW0 */
+			    <&gpio0  7 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>, /* ROW1 */
+			    <&gpio0 12 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>, /* ROW2 */
+			    <&gpio0  4 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>, /* ROW3 */
+			    <&gpio1  9 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>, /* ROW4 */
+			    <&gpio0  8 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>; /* ROW5 */
+
+		/* 列 = 输出（被驱动）。顺序必须 COL0 -> COL3 */
+		col-gpios = <&gpio0  5 GPIO_ACTIVE_HIGH>,  /* COL0 */
+			    <&gpio0  6 GPIO_ACTIVE_HIGH>,  /* COL1 */
+			    <&gpio0 26 GPIO_ACTIVE_HIGH>,  /* COL2 */
+			    <&gpio0 30 GPIO_ACTIVE_HIGH>;  /* COL3 */
+
+		/* 每键都有隔离二极管：未选中列直接驱动为无效电平，无需稳定延时 */
+		col-drive-inactive;
+		settle-time-us = <0>;
+
+		/* 有隔离二极管 => 物理上不会鬼键，关掉检测以支持任意多键同按 */
+		no-ghostkey-check;
+
+		/* 稀疏矩阵掩码，每列一个行位掩码（bit n = ROWn 是否存在）：
+		 *   COL0: ROW1,2,3,4,5 -> 0b00111110 = 0x3E
+		 *   COL1: ROW1,2,3,4,5 -> 0b00111110 = 0x3E
+		 *   COL2: ROW1,2,3,4   -> 0b00011110 = 0x1E
+		 *   COL3: ROW0,1,3,5   -> 0b00101011 = 0x2B
+		 * 置位总数 18 = 17 个机械轴 + 1 个 EC11 编码器按键
+		 */
+		actual-key-mask = <0x3E 0x3E 0x1E 0x2B>;
+
+		/* 空闲时行 GPIO 挂中断，按下即唤醒；松手 100ms 后退回中断态 */
+		idle-mode = "interrupt";
+		poll-period-ms = <5>;
+		poll-timeout-ms = <100>;
+		debounce-down-ms = <10>;
+		debounce-up-ms = <20>;
+
+		/* 行列坐标 -> 标准键值。必须是 kbd-matrix 的子节点 */
+		kbd_keymap: keymap {
+			compatible = "input-keymap";
+			row-size = <6>;
+			col-size = <4>;
+			keymap = <
+				MATRIX_KEY(0, 3, INPUT_KEY_MUTE)
+				MATRIX_KEY(1, 0, INPUT_KEY_NUMLOCK)
+				MATRIX_KEY(1, 1, INPUT_KEY_KPSLASH)
+				MATRIX_KEY(1, 2, INPUT_KEY_KPASTERISK)
+				MATRIX_KEY(1, 3, INPUT_KEY_KPMINUS)
+				MATRIX_KEY(2, 0, INPUT_KEY_KP7)
+				MATRIX_KEY(2, 1, INPUT_KEY_KP8)
+				MATRIX_KEY(2, 2, INPUT_KEY_KP9)
+				MATRIX_KEY(3, 0, INPUT_KEY_KP4)
+				MATRIX_KEY(3, 1, INPUT_KEY_KP5)
+				MATRIX_KEY(3, 2, INPUT_KEY_KP6)
+				MATRIX_KEY(3, 3, INPUT_KEY_KPPLUS)
+				MATRIX_KEY(4, 0, INPUT_KEY_KP1)
+				MATRIX_KEY(4, 1, INPUT_KEY_KP2)
+				MATRIX_KEY(4, 2, INPUT_KEY_KP3)
+				MATRIX_KEY(5, 0, INPUT_KEY_KP0)
+				MATRIX_KEY(5, 1, INPUT_KEY_KPDOT)
+				MATRIX_KEY(5, 3, INPUT_KEY_KPENTER)
+			>;
+		};
+	};
+};
+
+/* SoC dtsi 默认把 GPIO 控制器置为 disabled，这里显式使能。
+ * 否则 CONFIG_GPIO_NRFX 不会链接，矩阵驱动找不到 gpio0/gpio1 设备对象。 */
+&gpio0 {
+	status = "okay";
+};
+
+&gpio1 {
+	status = "okay";
+};
+
+/* GPIO 中断（矩阵 interrupt 空闲模式）依赖 GPIOTE 外设，SoC dtsi 默认 disabled */
+&gpiote0 {
+	status = "okay";
+};
+
+&flash0 {
+	partitions {
+		compatible = "fixed-partitions";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		boot_partition: partition@0 {
+			label = "mcuboot";
+			reg = <0x00000000 DT_SIZE_K(48)>;
+		};
+
+		slot0_partition: partition@c000 {
+			label = "image-0";
+			reg = <0x0000c000 DT_SIZE_K(472)>;
+		};
+
+		slot1_partition: partition@82000 {
+			label = "image-1";
+			reg = <0x00082000 DT_SIZE_K(472)>;
+		};
+
+		storage_partition: partition@f8000 {
+			label = "storage";
+			reg = <0x000f8000 DT_SIZE_K(32)>;
+		};
+	};
+};
