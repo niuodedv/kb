@@ -265,7 +265,9 @@
   [ ] LED（WS2812）链路与按下点亮/松手渐灭
   [ ] EC11 编码器（音量 / 静音）
   [ ] 屏幕（SPI + LVGL）
-  [ ] USB / BLE 双模切换
+  [ ] USB / BLE 双模切换（USB HID 方案已定稿见 usb 通信.txt，尚未实施；实施时按
+      其【11】顺序：先抽公共翻译层 hid_keymap -> dts/prj.conf 使能 NEXT 栈 ->
+      键盘上报（⚠️ USB 报文首字节要带 Report ID，与 BLE 不同）-> Consumer/NumLock）
   [x] HID 上报与 NumLock 双功能层（BLE 已通；NumLock 方向模式 LED 常亮已实现）
   [ ] 上位机协议（时间同步 / LED 颜色）
   [ ] 低功耗与电池管理
@@ -278,6 +280,9 @@
       有绑定广播=蓝慢闪 / 配对模式(无绑定)=蓝快闪 / 配对成功=绿闪3下后熄灭 /
       已连接与非 BLE 档=熄灭（OFF 时该键位按键灯反馈自动恢复）
       主动配对：长按 NumLock 3 秒 或 shell `ble pair` → bt_unpair 清绑定+重新广播
+      ⚠️ 崩溃修复：bt_unpair 不可在 k_timer 回调（系统时钟线程，不可阻塞）调用，
+      否则同步 HCI 命令超时（opcode 0x0406 Disconnect, err -11）→ 内核断言挂死。
+      已改为 timer 回调只 k_work_submit，配对动作在系统工作队列执行。
       ⚠️ 本 SDK 无 bt_bond_count，用 bt_foreach_bond 统计（saved_bond_count()）
 
 ----------------------------------------------------------------

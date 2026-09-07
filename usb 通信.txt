@@ -1,0 +1,223 @@
+================================================================
+USB 通信 —— USB HID（三模开关 USB 档）实现方案
+================================================================
+最后更新：2026-09-07
+状态：设计方案（【尚未写代码】，按本文档实施）
+
+----------------------------------------------------------------
+【1】目标与范围
+----------------------------------------------------------------
+  三模开关拨到 USB 档（kb_mode_get() == KB_MODE_USB）时：
+    - 矩阵按键  -> USB HID Keyboard 报告（8 字节，同 BLE）
+    - EC11 旋钮 -> USB HID Consumer 报告（音量加减，2 字节，同 BLE）
+    - EC11 按键 -> Consumer Mute（静音）
+    - 主机 NumLock 状态经 USB Output Report 同步（含双功能层与指示灯）
+  范围外：2.4G 档（无私有 dongle 方案，维持现状不做）、USB 串口/厂商通道
+  （上位机协议后续另立文档）、USB DFU（暂不做）。
+
+----------------------------------------------------------------
+【2】现状盘点（已核实）
+----------------------------------------------------------------
+  1. mode 模块已能正确判档：USB / 2.4G / BLE（三模开关 ADC 判档已修复验证）。
+  2. ble_hid.c 已实现完整 HID 报文逻辑：按键状态机（6KRO+修饰键）、
+     NumLock 双功能层翻译（dual_keys[] / key_usage_resolve）、Consumer 点按、
+     主机 LED Output Report 处理（led_report_apply）、模式门控。
+     —— 但这些逻辑与「BLE 发送」耦合在一起，USB 需要复用。
+  3. ble_hid.c 的 keymap_evt_cb 在非 BLE 档直接 return（门控），
+     所以 USB 档下按键现在【完全没有输出】——正是本方案要补的。
+  4. input 子系统支持同一设备挂多个回调（ble_hid 和新模块可并存互不干扰）。
+  5. 硬件（page0_full.png 已核实）：USB D-/D+ 经 R23/R24(0Ω) + U39(USBLC6-2SC6)
+     接入模块脚 29/31；nRF52840 自带 USB Full-Speed 设备控制器（无需外加芯片）。
+  6. SDK 样例已核实：samples/subsys/usb/hid-keyboard/（新栈）可直接当模板。
+
+----------------------------------------------------------------
+【3】技术选型：USB 设备栈用 NEXT（新栈）
+----------------------------------------------------------------
+  ⚠️ Zephyr 有两套 USB 设备栈，本方案选【新栈 USB_DEVICE_STACK_NEXT】：
+     - 旧栈 legacy（CONFIG_USB_DEVICE_STACK）已停止演进，样例被挪进
+       samples/subsys/usb/legacy/，不再推荐。
+     - 新栈（NEXT）是当前主线：样例 samples/subsys/usb/hid-keyboard/ 即新栈，
+       nRF52840 的 UDC 驱动（nordic,nrf-usbd）已支持。
+
+  prj.conf 新增（已核实自 hid-keyboard/prj.conf）：
+      CONFIG_USB_DEVICE_STACK_NEXT=y
+      CONFIG_USBD_HID_SUPPORT=y
+      CONFIG_UDC_DRIVER_LOG_LEVEL_WRN=y   # 调试期，量产后降
+
+  ⚠️ nRF52840 无 VBUS 检测引脚（原理图未接出 VBUS 到 GPIO），
+     usbd_can_detect_vbus() 为 false —— 初始化后直接 usbd_enable()，
+     插线即枚举，不依赖 VBUS 中断（样例中 VBUS 分支不适用于本板）。
+
+----------------------------------------------------------------
+【4】设备树（kb.dts / overlay）
+----------------------------------------------------------------
+  1. 使能 USB 控制器（nRF dtsi 已有 usbd 节点，board 侧只需打开）：
+       &usbd {
+           status = "okay";
+       };
+  2. HID 设备节点（zephyr,hid-device 绑定，字段已核实 dts/bindings/usb/zephyr,hid-device.yaml）：
+       / {
+           hid_kbd: hid_kbd {
+               compatible = "zephyr,hid-device";
+               protocol-code = "keyboard";     /* 支持 Boot 协议 */
+               in-report-size = <8>;           /* 最长输入报告（键盘 8 字节） */
+               in-polling-period-us = <1000>;  /* 1ms 轮询 */
+               out-report-size = <1>;          /* NumLock LED 输出报告走 OUT 管道 */
+               out-polling-period-us = <1000>;
+           };
+       };
+     ⚠️ 一个节点 = 一个 HID 接口。Consumer（音量）与键盘共用此接口
+        （描述符里用 Report ID 1/3 区分，见【6.3】报文格式差异）。
+
+----------------------------------------------------------------
+【5】架构设计（关键决策）
+----------------------------------------------------------------
+  ┌──────────┐   input 事件    ┌────────────┐  BLE 发送  ┌──────┐
+  │ keymap   │ ──────────────> │ ble_hid.c  │ ─────────> │ BLE  │
+  │ (dts)    │  （多回调并存）  └────────────┘            └──────┘
+  └──────────┘        │       ┌────────────┐  USB 发送  ┌──────┐
+                      └─────> │ usb_hid.c  │ ─────────> │ USB  │
+                              │ (新模块)    │            └──────┘
+                              └────────────┘
+  门控规则不变：ble_hid 只在 BLE 档处理，usb_hid 只在 USB 档处理。
+  两个回调共存于同一 keymap 设备，互不干扰（无需改动 ble_hid 的门控）。
+
+  5.1 必须先做的重构：抽「公共 HID 翻译层」
+      ble_hid.c 里三块逻辑 USB 也要用，不能复制两份（否则 NumLock 层改一处漏一处）：
+        - dual_keys[] 双功能层表 + key_usage_resolve()（NumLock 层切换）
+        - kbd_state 按键状态机（修饰键位图 + 6KRO 键值槽）
+        - numlock 主机同步逻辑（led_report_apply 的那套，含 (1,0) 指示灯）
+      方案：新建 src/hid/hid_keymap.c/.h（或并入 keys/），ble_hid.c 与 usb_hid.c
+      共用。报告描述符 hid_report_map[] 也一并搬进去（BLE rep_map 与 USB 描述符
+      保持同一份，避免两边行为漂移）。
+
+  5.2 新模块 src/usb/usb_hid.c/.h（对齐样例 samples/subsys/usb/hid-keyboard/）
+      - usbd 上下文组装（可参考 samples/subsys/usb/common/sample_usbd_init.c）：
+          USBD_DEVICE_DEFINE(ctx, DEVICE_DT_GET(DT_NODELABEL(usbd)), VID, PID);
+          USBD_DESC_LANG_DEFINE / USBD_DESC_MANUFACTURER_DEFINE("xxx") /
+          USBD_DESC_PRODUCT_DEFINE("BLE 小键盘")
+          USBD_CONFIGURATION_DEFINE(fs_cfg, ...);
+          usbd_add_descriptor(...) -> usbd_add_configuration(FS) ->
+          usbd_register_all_classes(FS) -> usbd_init() -> usbd_enable()
+        （nRF52840 只有 FS；样例的 HS 分支不触发，可简化掉）
+      - hid_device_register(hid_dev, 描述符, 长度, &ops)，ops 实现：
+          iface_ready  —— 记 ready 标志（未 ready 不发送）
+          set_protocol —— 记 boot_mode（与 BLE 侧语义一致）
+          set_report / output_report —— NumLock 主机同步（走公共层）
+          get_report   —— 返回当前按键状态快照（可简单返回全 0，看主机需要）
+      - input 回调（INPUT_CALLBACK_DEFINE 同一设备再挂一个）：
+          仅 kb_mode_get() == KB_MODE_USB 时处理 -> 公共层翻译 -> submit。
+      - 发送：hid_device_submit_report(hid_dev, len, buf)
+
+  5.3 main.c 增加一步：kb_usb_hid_init()（建议放 kb_ble_hid_init() 之后，
+      顺序无强依赖，但 LED/mode 必须已初始化）。
+
+----------------------------------------------------------------
+【6】报文与行为细节（⚠️ 与 BLE 的差异是本方案最大的坑）
+----------------------------------------------------------------
+  6.1 【报文必须带 Report ID 字节】
+      BLE：报文【不含】Report ID（由 GATT 特征/CCC 区分，见 ble_hid.c 注释）。
+      USB：描述符里用了 Report ID，中断 IN/OUT 传输的报文【首字节必须是
+           Report ID】，即：
+             键盘输入报告   = 9 字节（0x01 + 修饰键 + 保留 + 6 键值）
+             Consumer 输入  = 3 字节（0x03 + 16 位用法）
+             LED 输出报告   = 2 字节（0x02 + LED 位图）——主机→设备方向同理
+      ⚠️ 这是与 ble_hid.c 报文构造最大的不同，公共层要支持两种打包方式
+         （建议公共层只产 8 字节/2 字节载荷，各 transport 自己加 ID 头）。
+  6.2 主机 Set_Report（NumLock LED）：
+      新栈走 ops.output_report（OUT 管道）或 set_report（控制管道），
+      都要处理：解析 bit0 -> 公共层 numlock 同步 -> 双功能层切换 + (1,0) 灯。
+  6.3 Boot Protocol：protocol-code = "keyboard" 已在 dts 声明，
+      主机切 Boot 时 ops.set_protocol 收到 0 —— 与 BLE 侧 boot_mode 同语义。
+  6.4 模式联动：
+      - 上电即 usbd_enable()（USB 插着就枚举，不管当前什么档）。
+        按键是否发送只由 kb_mode_get() 门控。这样「BLE 档插着 USB 线充电+
+        枚举」也不影响，拨到 USB 档即刻可用。
+      - 拔线：主机侧自然断开；设备侧无需特殊处理（suspend 消息可监听用于省电，暂不做）。
+      - 拨离 USB 档：公共层先「全键释放」再停止发送（与 ble_hid 离开 BLE 的
+        处理对称：memset 状态 + 发一帧全 0 报告），避免残留按键粘住。
+  6.5 Consumer（音量/静音）：与 BLE 一样「点按」语义——发用法值后立刻发 0x0000
+      松手帧，否则音量会持续增减/静音粘住。
+  6.6 长按 NumLock 触发 BLE 配对（ble_hid 里的逻辑）在 USB 档不生效
+      （ble_hid 的 input 回调有模式门控，USB 档直接 return，无需改动）。
+  6.7 USB 与 BLE 互斥已由三模开关保证（单档生效），不存在双通道同时上报。
+      若未来要做「USB+BLE 双活」，需在公共层加发送锁与重复抑制——超出本方案。
+
+----------------------------------------------------------------
+【7】VID / PID
+----------------------------------------------------------------
+  - 开发期：可暂用样例值 VID=0x2FE3（Zephyr 项目 VID）。
+    ⚠️ Zephyr 的 VID 官方声明仅限样例使用；量产前必须改为自己的
+       VID/PID（去 usb.org 购买）或贴牌方案商的 VID。
+  - 修改位置：USBD_DEVICE_DEFINE 的 VID/PID 参数 + USBD_DESC_PRODUCT_DEFINE
+    的产品名字符串（电脑设备管理器里显示的名字）。
+
+----------------------------------------------------------------
+【8】文件与改动清单（实施时按此执行）
+----------------------------------------------------------------
+  新增：
+    src/usb/usb_hid.c / usb_hid.h     —— USB transport + usbd 组装
+    src/hid/hid_keymap.c / .h         —— 公共翻译层（从 ble_hid.c 抽出）：
+                                           dual_keys / key_usage_resolve /
+                                           kbd_state 状态机 / hid_report_map /
+                                           numlock 同步处理
+    （CMakeLists.txt 加 src/hid、src/usb 两个子目录）
+  修改：
+    ble_hid.c        —— 改用公共翻译层；报文构造保留 BLE 侧（无 Report ID）
+    kb.dts           —— &usbd 使能 + hid_kbd 节点
+    prj.conf         —— USB 新栈与 HID 支持
+    main.c           —— kb_usb_hid_init()
+  不改：
+    mode.c / led.c（状态灯语义不变）/ knob.c
+
+----------------------------------------------------------------
+【9】风险与待确认
+----------------------------------------------------------------
+  1. hid_device_submit_report() 能否直接在 input 线程上下文调用？
+     样例是 msgq + 独立主循环线程发送的。若 submit 内部有阻塞/不安全，
+     则 usb_hid 也用 K_MSGQ + 系统工作队列（或专用线程）转发——
+     实施时先按「input 线程直接 submit」写，D01 若不稳立刻切 msgq 方案。
+  2. USB 枚举时主机请求的描述符大小：in-report-size=8 是最长输入报告，
+     Report ID 头由栈自动加还是软件加？⚠️ 实施第一步用 USBD 日志
+     （CONFIG_USBD_HID_LOG_LEVEL_DBG）实测确认，见【6.1】。
+  3. nRF52840 USB 需要 HFCLK 晶振稳定后才能工作（驱动自动处理，
+     板上已有 32M 晶振，无需干预）。
+  4. Windows/macOS/Linux 三平台枚举与无驱动输出——HID 标准类，理论全兼容，
+     D01 用 Windows 验证。
+  5. 6 个空位 + EC11 旋钮键位在 USB 档的行为与 BLE 完全一致（公共层保证）。
+  6. LED 电流预算：USB 插入供电由 IP5306 供电路径不变（USB 线只接 D+/D-，
+     VBUS 未接供电网络——若原理图 VBUS 也没有接 5V 供电，则 USB 仅通信，
+     充电仍走原路径，无需改动）。⚠️ VBUS 是否接 VBUS->充电端待查原理图确认。
+
+----------------------------------------------------------------
+【10】测试用例（按阶段）
+----------------------------------------------------------------
+  D01 —— USB 枚举 + 键盘基本输出（本方案第一里程碑）
+    [ ] USB 档插线：设备管理器枚举为 HID Keyboard，无未知设备
+    [ ] 记事本按键输出正确（数字层：NumLock 开时 7 8 9 / 4 5 6 / 1 2 3 ...）
+    [ ] 组合键：Ctrl+C / Shift+字母 / Alt+Tab 行为正常
+    [ ] 6KRO：六键同按不丢、第七键被丢弃且有日志
+  D02 —— Consumer + NumLock 层
+    [ ] 旋钮 CW/CCW -> 音量 +/-，单格单步（不粘键）
+    [ ] 旋钮按键 -> 静音切换
+    [ ] 主机按 NumLock -> 键盘收 Output Report，方向层生效，(1,0) 灯常亮
+    [ ] USB 档下方向层：1/End 2/↓ 3/PgDn 等输出导航键
+  D03 —— 模式切换与插拔鲁棒性
+    [ ] BLE 档 <-> USB 档来回拨：各自输出通道即时切换，无粘键
+         （重点验证拨离 USB 档时「全键释放」）
+    [ ] 拔线重插：重新枚举正常
+    [ ] USB 档未插线按键：无输出、无异常日志刷屏
+    [ ] 长按 NumLock 在 USB 档不触发 BLE 配对（保持现状）
+  D04 —— 收尾
+    [ ] 三平台抽查（Windows 必测，macOS/Linux 抽测）
+    [ ] suspend/resume 行为观察（不做自动挂起也可接受）
+
+----------------------------------------------------------------
+【11】实施顺序建议
+----------------------------------------------------------------
+  1. 抽公共翻译层 hid_keymap（ble_hid 行为零变化，编译过即可）
+  2. dts + prj.conf 使能 USB，空 usb_hid 骨架枚举成功（D01 前置）
+  3. 键盘报告发送（含 Report ID 头），D01 通过
+  4. Consumer + NumLock 同步（D02）
+  5. 模式切换收尾与全键释放（D03）
+================================================================

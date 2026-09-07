@@ -546,17 +546,32 @@ static void mode_cb(enum kb_mode prev, enum kb_mode now, void *user_data)
  * 注意：已配对的电脑会被解绑，必须在其蓝牙设置里删除设备后重新搜索配对。
  */
 
-static void pairing_timer_expired(struct k_timer *timer)
+/*
+ * ⚠️ k_timer 回调跑在系统时钟线程，【不可阻塞】；
+ * 而 bt_unpair 内部可能发同步 HCI 命令并等待 Controller 回应。
+ * 在 timer 上下文里直接调用会 HCI 命令超时（opcode 0x0406, err -11）
+ * -> 内核断言挂死。必须经由系统工作队列转一手。
+ */
+static void pairing_work_handler(struct k_work *work)
 {
-	ARG_UNUSED(timer);
+	ARG_UNUSED(work);
 
 	if (kb_mode_get() != KB_MODE_BLE) {
 		return;
 	}
 
+	(void)kb_ble_hid_enter_pairing();
+}
+
+static K_WORK_DEFINE(pairing_work, pairing_work_handler);
+
+static void pairing_timer_expired(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+
 	LOG_INF("NumLock 长按 %u 秒 -> 进入配对模式",
 		(unsigned)(PAIRING_HOLD_MS / 1000));
-	(void)kb_ble_hid_enter_pairing();
+	k_work_submit(&pairing_work);
 }
 
 int kb_ble_hid_enter_pairing(void)
