@@ -22,4 +22,5 @@ target_sources(app PRIVATE
 	src/usb/usb_hid.c
 	src/power/ip5306.c
 	src/power/battery.c
+	src/power/bat_adc.c
 )

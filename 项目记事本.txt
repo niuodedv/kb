@@ -303,7 +303,17 @@
         加大到 2048；usb_tx 线程栈 1024→1536 预防。
   [x] HID 上报与 NumLock 双功能层（BLE 已通；NumLock 方向模式 LED 常亮已实现）
   [ ] 上位机协议（时间同步 / LED 颜色）
-  [ ] 低功耗与电池管理
+  [ ] 低功耗与电池管理（电压采样代码已实现待实板验证 2026-09-07；方案见 电池电压测量.txt）
+      引脚：BAT_ADC_EN=P0.09 高有效(NMOS 低边)、BAT_ADC=P0.31=AIN7
+      电路：VBAT→R6 100k→节点(C29 100nF)→R8 100k→Q1→GND，分压 1/2
+      已实现：dts channel@7(acq 40µs) + 自定义 binding kb,bat-adc-en
+      （dts/bindings/kb,bat-adc-en.yaml；⚠️ zephyr_user 无 compatible，
+      phandle-array 属性必须经 binding 声明 DT 宏才会生成——踩过）；
+      src/power/bat_adc.c 专用线程 60s 周期（EN→30ms→8 次平均丢第 1 次→EN low，
+      ×2 换算，线性 3.3~4.2V→percent，D03 标定分段表）；
+      battery.c percent 已对接；shell `battery` 含 VBAT 显示
+      安时积分法评估过：无电流采样硬件做不了，详见对话/方案对比，改版可加
+      shunt+放大器或 I2C 电量计 IC，另值得调研 IP5306 I2C 是否可读 SOC
   [x] BLE HID 编译通过（含 NumLock 指示灯改动，2026-09-07；构建见【1】编译命令小节）
   [x] 三模开关 ADC 换算 Bug 修复：115200mV 饱和致切档失效，改 adc_dt 官方路径（2026-09-07）
   [x] 真正根因：sample_mv 采样 buffer 误用 int32_t（nRF 每样本 int16），高 16 位栈残留

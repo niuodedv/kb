@@ -8,6 +8,7 @@
 #include "ble/ble_hid.h"
 #include "usb/usb_hid.h"
 #include "power/ip5306.h"
+#include "power/bat_adc.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -65,6 +66,13 @@ int main(void)
 	err = ip5306_init();
 	if (err) {
 		LOG_ERR("电源管理(IP5306)初始化失败: %d", err);
+		return err;
+	}
+
+	/* 电池电压采样：EN=P0.09、ADC=AIN7，专用线程周期测量（见 电池电压测量.txt） */
+	err = kb_bat_adc_init();
+	if (err) {
+		LOG_ERR("电池电压采样模块初始化失败: %d", err);
 		return err;
 	}
 

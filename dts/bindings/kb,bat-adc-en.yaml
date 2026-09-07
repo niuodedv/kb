@@ -1,0 +1,15 @@
+# Copyright (c) 2026 kb project
+# SPDX-License-Identifier: Apache-2.0
+
+description: >
+  Battery ADC sampling enable gate. Drives the NMOS low-side switch that
+  connects the VBAT divider (R6/R8 100k/100k) to ground during sampling.
+  See 电池电压测量.txt.
+
+compatible: "kb,bat-adc-en"
+
+properties:
+  en-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO driving the NMOS gate (active high = sampling on).

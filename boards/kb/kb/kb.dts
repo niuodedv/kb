@@ -197,6 +197,21 @@
 		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 10)>;
 		zephyr,resolution = <12>;
 	};
+
+	/*
+	 * 电池电压采样：BAT_ADC(P0.31) = AIN7（详见 电池电压测量.txt）
+	 * 电路：VBAT → R6(100k) → 节点(C29 100nF) → R8(100k) → Q1(NMOS) → GND
+	 * 节点电压 = VBAT/2（1.5~2.1V），满量程 3.6V 覆盖。
+	 * ⚠️ acquisition-time 40µs：分压源阻抗 ≈50kΩ 较高，采样窗口需加长。
+	 */
+	channel@7 {
+		reg = <7>;
+		zephyr,input-positive = <NRF_SAADC_AIN7>;   /* P0.31 = BAT_ADC */
+		zephyr,reference = "ADC_REF_INTERNAL";      /* 内部 0.6V */
+		zephyr,gain = "ADC_GAIN_1_6";               /* 满量程 3.6V */
+		zephyr,acquisition-time = <ADC_ACQ_TIME(ADC_ACQ_TIME_MICROSECONDS, 40)>;
+		zephyr,resolution = <12>;
+	};
 };
 
 /*
@@ -277,5 +292,13 @@
 / {
 	aliases {
 		led-strip = &ws2812;
+	};
+
+	/* 电池采样 MOS 使能（NMOS 低边，高电平导通；详见 电池电压测量.txt）
+	 * 自定义 binding：dts/bindings/kb,bat-adc-en.yaml（phandle-array 必须有
+	 * binding 声明，DT 宏才会生成——zephyr_user 无 compatible 走不通） */
+	bat_en: bat-adc-en {
+		compatible = "kb,bat-adc-en";
+		en-gpios = <&gpio0 9 GPIO_ACTIVE_HIGH>;
 	};
 };
