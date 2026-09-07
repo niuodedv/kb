@@ -32,15 +32,15 @@ extern "C" {
  * 该键位的按键灯反馈被状态指示征用（按下不再点亮）。
  */
 enum kb_led_status {
-	/** 熄灭（非 BLE 档或未要求显示） */
+	/** 熄灭（已连接 / 非 BLE 档 / 事件结束）。OFF 时该键位按键灯反馈恢复 */
 	KB_LED_STATUS_OFF = 0,
-	/** 已连接：绿灯常亮 */
+	/** （预留）绿灯常亮——当前连接后默认熄灭，不使用 */
 	KB_LED_STATUS_CONNECTED,
 	/** 广播中且已有绑定（等待已配对电脑回连）：蓝灯慢闪 */
 	KB_LED_STATUS_ADV_BONDED,
 	/** 配对模式（无绑定、可被新主机配对）：蓝灯快闪 */
 	KB_LED_STATUS_PAIRING,
-	/** 配对成功：绿灯闪三下后自动回到「已连接」常亮 */
+	/** 配对成功：绿灯闪三下后自动熄灭 */
 	KB_LED_STATUS_PAIR_OK,
 };
 

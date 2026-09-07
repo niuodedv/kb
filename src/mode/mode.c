@@ -61,9 +61,8 @@ static const struct adc_dt_spec mode_adc = {
 #define INIT_SAMPLE_N   3
 #define POLL_PERIOD_MS  100
 #define DEBOUNCE_N      3
-/* 心跳周期：采集期临时 5 秒一条（原 30 秒），日志里带 raw 原始值用于三档标定，
- * 标定完成后可改回 (30000U / POLL_PERIOD_MS) */
-#define HEARTBEAT_POLLS (5000U / POLL_PERIOD_MS)
+/* 心跳周期：每 30 秒打一条存活日志（带 raw 原始值），日志时间戳即可看出系统是何时卡死的 */
+#define HEARTBEAT_POLLS (30000U / POLL_PERIOD_MS)
 
 #define CB_SLOTS 4
 

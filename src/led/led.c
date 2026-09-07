@@ -292,15 +292,13 @@ static void anim_handler(struct k_work *work)
 		}
 	}
 
-	/* ---- 状态指示灯：独立状态机（闪烁/常亮），优先于按键灯逻辑 ---- */
-	if (STATUS_LED_IDX != KB_LED_NONE) {
+	/* ---- 状态指示灯：独立状态机，仅在激活期间接管该灯 ----
+	 * OFF（已连接/非 BLE 档）时完全不碰该灯，按键灯反馈自动恢复。 */
+	if ((STATUS_LED_IDX != KB_LED_NONE) &&
+	    (st_state != KB_LED_STATUS_OFF)) {
 		uint8_t st_level = 0;
 
 		switch (st_state) {
-		case KB_LED_STATUS_CONNECTED:
-			st_level = 255;
-			break;
-
 		case KB_LED_STATUS_ADV_BONDED:
 			st_level = (((uint32_t)st_phase * ANIM_PERIOD_MS) /
 				    ST_SLOW_HALF_MS) & 1 ? 255 : 0;
@@ -312,12 +310,12 @@ static void anim_handler(struct k_work *work)
 			break;
 
 		case KB_LED_STATUS_PAIR_OK: {
-			/* 绿灯亮-灭交替三下（6 个半周期），结束自动回「已连接」 */
+			/* 绿灯亮-灭交替三下（6 个半周期），结束自动熄灭 */
 			uint16_t half = ST_PAIR_HALF_MS / ANIM_PERIOD_MS;
 
 			if (st_phase >= (uint16_t)(half * 6U)) {
-				st_state = KB_LED_STATUS_CONNECTED;
-				st_level = 255;
+				st_state = KB_LED_STATUS_OFF;
+				st_level = 0;
 			} else {
 				st_level = ((st_phase / half) & 1) ? 0 : 255;
 			}
@@ -385,8 +383,8 @@ int kb_led_press(uint8_t row, uint8_t col)
 		return 0;
 	}
 
-	if (idx == STATUS_LED_IDX) {
-		/* (1,1) 已被 BLE 状态灯征用，不做按键反馈 */
+	if ((idx == STATUS_LED_IDX) && (st_state != KB_LED_STATUS_OFF)) {
+		/* 状态灯激活期间 (1,1) 被征用；熄灭状态恢复按键灯反馈 */
 		return 0;
 	}
 

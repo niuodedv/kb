@@ -615,9 +615,10 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 		LOG_ERR("通知 HIDS 连接失败: %d", hids_err);
 	}
 
-	kb_led_status_set(KB_LED_STATUS_CONNECTED);   /* 绿灯常亮 */
+	/* 已连接：熄灭状态灯（不常亮），"/" 键的按键灯反馈随之恢复 */
+	kb_led_status_set(KB_LED_STATUS_OFF);
 
-	LOG_INF("BLE 已连接: %s", addr);
+	LOG_INF("BLE 已连接: %s（状态灯已熄灭）", addr);
 }
 
 static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
