@@ -56,8 +56,13 @@ USBD_DESC_MANUFACTURER_DEFINE(usb_mfr, "kb");
 USBD_DESC_PRODUCT_DEFINE(usb_product, "BLE Keypad");
 USBD_DESC_CONFIG_DEFINE(usb_fs_cfg_desc, "FS Configuration");
 
-/* bus powered，bMaxPower=100 单位 2mA（200mA） */
-USBD_CONFIGURATION_DEFINE(usb_fs_config, 0, 100, &usb_fs_cfg_desc);
+/* bus powered + 远程唤醒：
+ * ⚠️ Windows 会在键盘空闲几秒后 selective suspend 挂起设备（日志可见
+ * SUSPEND/RESUMING）。挂起期间 IN 报文发不出去——若不开远程唤醒，
+ * 短按 NumLock 等按键会被主机遗漏（表现为功能不切换、灯效混乱）。
+ * 声明 REMOTE_WAKEUP 后设备可主动唤醒主机。 */
+USBD_CONFIGURATION_DEFINE(usb_fs_config, USB_SCD_REMOTE_WAKEUP, 100,
+			  &usb_fs_cfg_desc);
 
 static bool usb_ready;      /* HID 接口就绪（主机已完成配置） */
 static bool usb_boot_mode;  /* 主机选择了 Boot Protocol */
@@ -115,6 +120,12 @@ static int usb_set_report(const struct device *dev, const uint8_t type,
 		return -EINVAL;
 	}
 
+	/* 调试期：打印主机 LED 报告原始数据（确认 Report ID 剥离是否正确） */
+	if (len <= 2) {
+		LOG_INF("USB LED 报告: len=%u data=%02X%02X", (unsigned int)len,
+			(len > 1) ? buf[0] : 0U, buf[len - 1]);
+	}
+
 	/* 主机 NumLock 同步（公共层处理双功能层切换与 (1,0) 指示灯） */
 	hid_numlock_set((buf[0] & HID_LED_BIT_NUM_LOCK) != 0);
 
@@ -124,8 +135,20 @@ static int usb_set_report(const struct device *dev, const uint8_t type,
 static void usb_output_report(const struct device *dev, const uint16_t len,
 			      const uint8_t *const buf)
 {
-	/* OUT 管道收到的输出报告（走 set_report 同一逻辑） */
-	(void)usb_set_report(dev, HID_REPORT_TYPE_OUTPUT, 0, len, buf);
+	const uint8_t *leds = buf;
+	uint16_t leds_len = len;
+
+	/*
+	 * ⚠️ OUT 中断管道的报文首字节是 Report ID（usbd_hid 类透传不剥）：
+	 * 主机发的是 [0x02, LED位图]。控制管道 Set_Report 则不含 ID 前缀。
+	 * 这里剥掉 ID 后统一交给 usb_set_report。
+	 */
+	if ((buf != NULL) && (len >= 2) && (buf[0] == HID_REPORT_ID_LEDS)) {
+		leds = &buf[1];
+		leds_len = len - 1;
+	}
+
+	(void)usb_set_report(dev, HID_REPORT_TYPE_OUTPUT, 0, leds_len, leds);
 }
 
 static void usb_set_idle(const struct device *dev, const uint8_t id,
@@ -190,10 +213,33 @@ static void usb_tx_thread_fn(void *p1, void *p2, void *p3)
 			continue;
 		}
 
+		/*
+		 * ⚠️ 主机 selective suspend 期间 IN 传输无法完成，报文会卡死。
+		 * 检测到挂起先请求远程唤醒并等总线恢复（最多 ~2s），再发送。
+		 * 对齐官方 hid-keyboard 样例的挂起处理。
+		 */
+		if (usbd_is_suspended(&usb_ctx)) {
+			int err = usbd_wakeup_request(&usb_ctx);
+
+			if (err) {
+				LOG_WRN("远程唤醒请求失败: %d", err);
+			}
+
+			for (int i = 0; i < 200 && usbd_is_suspended(&usb_ctx);
+			     i++) {
+				k_msleep(10);
+			}
+
+			if (usbd_is_suspended(&usb_ctx)) {
+				LOG_WRN("USB 仍挂起，丢弃报告");
+				continue;
+			}
+		}
+
 		int err = hid_device_submit_report(hid_dev, m.len, m.data);
 
 		if (err) {
-			LOG_DBG("USB 报告发送失败: %d", err);
+			LOG_ERR("USB 报告发送失败: %d", err);
 		}
 	}
 }
@@ -287,6 +333,12 @@ static void usb_keymap_evt_cb(struct input_event *evt, void *user_data)
 		usb_consumer_tap(HID_CONSUMER_USAGE_MUTE);
 		LOG_INF("USB 上报: Consumer Mute（静音切换）");
 		return;
+	}
+
+	/* 物理 NumLock 按下：本地乐观切换层与灯，主机 LED 报告到达后校正
+	 * （主机 LED 报告往往延迟 0.5~1 秒，只等回环会让短按体验明显滞后） */
+	if ((evt->code == INPUT_KEY_NUMLOCK) && pressed) {
+		hid_numlock_toggle_local();
 	}
 
 	/* 修饰键走位图，不占 6 个键值槽 */

@@ -217,9 +217,13 @@
 		compatible = "zephyr,hid-device";
 		label = "HID0";
 		protocol-code = "keyboard";      /* 支持 Boot 协议 */
-		in-report-size = <8>;            /* 最长输入报告：键盘 8 字节 */
+		/* ⚠️ 以下两个值必须是「线上总包长」（含 Report ID 字节），
+		 * 驱动据此分配端点缓冲，缺一个字节都会导致报文被拒：
+		 *   IN  = Report ID(1) + 键盘 8 字节 = 9
+		 *   OUT = Report ID(1) + LED 1 字节  = 2 */
+		in-report-size = <9>;
 		in-polling-period-us = <1000>;   /* 1ms 轮询 */
-		out-report-size = <1>;           /* NumLock LED 输出报告走 OUT 管道 */
+		out-report-size = <2>;           /* NumLock LED 输出报告走 OUT 管道 */
 		out-polling-period-us = <1000>;
 	};
 };

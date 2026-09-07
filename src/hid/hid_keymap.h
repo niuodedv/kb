@@ -80,6 +80,16 @@ void hid_kb_state_key(uint8_t usage, uint8_t mod_mask, bool pressed);
 bool hid_numlock_get(void);
 
 /**
+ * @brief 本地乐观切换 NumLock 层（物理按下 NumLock 键时调用）
+ *
+ * 主机的 LED Output Report 往往延迟 0.5~1 秒才到达（尤其 Windows），
+ * 若只等主机回环，短按时灯与层的反馈明显滞后。
+ * 本地先立即切换层与灯给用户即时反馈，主机 LED 报告到达后
+ * 由 hid_numlock_set() 校正为权威状态。
+ */
+void hid_numlock_toggle_local(void);
+
+/**
  * @brief 同步主机 NumLock 状态
  *
  * 内部处理双功能层切换与 NumLock 键 (1,0) LED 指示：

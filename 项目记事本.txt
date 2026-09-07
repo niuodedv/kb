@@ -8,7 +8,7 @@
         第 2~18 页是 17 个"轴 + 灯"复用子图（CBB1..CBB17）
 
 【0】使用规则
-  本文件只记录"已经核实过的事实"与"已经做过的决策"，后续会话可直接引用，
+  本文件只记录"已经核实过的事实"与"已’经做过的决策"，后续会话可直接引用，
   不要再去重复分析原理图或 SDK 源码。
   凡标【待确认】的条目，动手写代码前必须先实测。
   配套文档：
@@ -278,6 +278,26 @@
         修复2：hid_device_submit_report 可能阻塞，绝不能在 input 线程直接调用
         （按键全停）。改为专用发送线程（1024 栈，优先级 7）+ 8 深 msgq，
         input 回调只入队；切档时 k_msgq_purge 丢弃残留报文。
+        修复4：USB 档 NumLock 只能切一次/层锁死/指示灯常亮 —— OUT 中断管道
+        报文首字节是 Report ID（usbd_hid 类透传不剥，usbd_hid.c:125），我们误把
+        buf[0]=0x02 当 LED 位图（0x02&0x01=0 恒判关）。usb_output_report 已剥
+        Report ID；控制管道 Set_Report 不含 ID 前缀，两条路径现统一。
+        修复5：USB 连接时 NumLock 导航模式不常亮（与 BLE 不一致）——断连时
+        曾把 numlock 复位为数字层，而 USB 主机连接后不像 BLE 那样主动同步
+        初始 LED。已改为：断连/切档不复位 numlock（跨连接保持）；
+        hid_numlock_set 无条件重新应用灯效（防状态漂移后无法恢复）；
+        usb_set_report 加 LED 报告原始数据日志（调试期，稳定后删）。
+        修复6：主机 selective suspend + 未开远程唤醒 → 挂起期间短按键值发不出
+        （功能真没切）。已声明 REMOTE_WAKEUP + 发送线程 wakeup_request。
+        修复7：本地乐观切换（NumLock 按下瞬间设备先切层+灯，主机 LED 校正）
+        ——BLE/USB 一致，短按即时反馈。
+        修复8：数字层改发标准数字键（0x1E~0x27）而非 KP_*（0x54~）——KP 用法
+        会被主机按主机 NumLock 状态二次解释，与设备层错位时输出混乱。
+        改后输出 100% 由设备层决定。
+        修复9：数字 5（唯一双层同值的单功能数字键）不在 dual_keys 表，仍发
+        KP_5 被主机 NumLock 二次解释（开能输 5、关无输出——用户实测线索）。
+        已入表发标准数字键。其余 KP 操作符（/+/-/*//Enter）不受 NumLock
+        影响无需改。用户实测 0 键输出 "000" 正常（标准数字键生效）。
         修复3：切 USB 档枚举时 UDC 驱动线程 udc_nrfx 栈溢出（MPU FAULT /
         Stack overflow）——CONFIG_UDC_NRF_THREAD_STACK_SIZE 默认仅 512B，
         加大到 2048；usb_tx 线程栈 1024→1536 预防。

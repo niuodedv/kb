@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include <zephyr/input/input.h>
+#include <zephyr/input/input_hid.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/usb/class/hid.h>
@@ -40,17 +41,27 @@ struct dual_key {
 	uint8_t hid_nav;   /* NumLock 关：导航层 */
 };
 
+/*
+ * ⚠️ 数字层【必须发标准数字键用法（0x1E~0x27），不能用 KP_*（0x54~0x63）】：
+ * KP 用法会被主机按「主机自己的 NumLock 状态」二次解释——一旦主机 NumLock
+ * 与设备层错位（切档/主机状态漂移都可能导致），输出就会看起来
+ * 「短按没切换/依赖按法」。改用标准数字键后，输出 100% 由设备层决定。
+ */
 static const struct dual_key dual_keys[] = {
-	{INPUT_KEY_KP7,   HID_KEY_KP_7,   HID_KEY_HOME},
-	{INPUT_KEY_KP8,   HID_KEY_KP_8,   HID_KEY_UP},
-	{INPUT_KEY_KP9,   HID_KEY_KP_9,   HID_KEY_PAGEUP},
-	{INPUT_KEY_KP4,   HID_KEY_KP_4,   HID_KEY_LEFT},
-	{INPUT_KEY_KP6,   HID_KEY_KP_6,   HID_KEY_RIGHT},
-	{INPUT_KEY_KP1,   HID_KEY_KP_1,   HID_KEY_END},
-	{INPUT_KEY_KP2,   HID_KEY_KP_2,   HID_KEY_DOWN},
-	{INPUT_KEY_KP3,   HID_KEY_KP_3,   HID_KEY_PAGEDOWN},
-	{INPUT_KEY_KP0,   HID_KEY_KP_0,   HID_KEY_INSERT},
-	{INPUT_KEY_KPDOT, HID_KEY_KP_DOT, HID_KEY_DELETE},
+	{INPUT_KEY_KP7,   HID_KEY_7,   HID_KEY_HOME},
+	{INPUT_KEY_KP8,   HID_KEY_8,   HID_KEY_UP},
+	{INPUT_KEY_KP9,   HID_KEY_9,   HID_KEY_PAGEUP},
+	{INPUT_KEY_KP4,   HID_KEY_4,   HID_KEY_LEFT},
+	/* 5 是单功能键（两层都是数字），也必须进表发标准数字键：
+	 * 若走默认翻译会发 KP_5(0x57)，被主机按其 NumLock 状态二次解释，
+	 * 主机 NumLock 关时 KP_5 无输出（实测线索：5 开时能输、关时不能） */
+	{INPUT_KEY_KP5,   HID_KEY_5,   HID_KEY_5},
+	{INPUT_KEY_KP6,   HID_KEY_6,   HID_KEY_RIGHT},
+	{INPUT_KEY_KP1,   HID_KEY_1,   HID_KEY_END},
+	{INPUT_KEY_KP2,   HID_KEY_2,   HID_KEY_DOWN},
+	{INPUT_KEY_KP3,   HID_KEY_3,   HID_KEY_PAGEDOWN},
+	{INPUT_KEY_KP0,   HID_KEY_0,   HID_KEY_INSERT},
+	{INPUT_KEY_KPDOT, HID_KEY_DOT, HID_KEY_DELETE},
 };
 
 static struct hid_kb_state kbd_state;
@@ -199,17 +210,22 @@ bool hid_numlock_get(void)
 	return numlock_on;
 }
 
+void hid_numlock_toggle_local(void)
+{
+	hid_numlock_set(!numlock_on);
+}
+
 void hid_numlock_set(bool on)
 {
-	if (on == numlock_on) {
-		return;
-	}
+	bool changed = (on != numlock_on);
 
 	numlock_on = on;
 
 	/*
 	 * NumLock 灯指示：方向（导航）模式下 NumLock 键 LED 常亮，
 	 * 数字模式下取消常亮。
+	 * ⚠️ 无条件重新应用（重复 force_on/off 无害）：避免状态没变时
+	 * 跳过导致灯效被其他路径（如全灭操作）清掉后无法恢复。
 	 */
 	if (numlock_on) {
 		kb_led_force_off(1, 0);
@@ -217,7 +233,9 @@ void hid_numlock_set(bool on)
 		kb_led_force_on(1, 0);
 	}
 
-	LOG_INF("主机 NumLock: %s（%s层生效）%s", numlock_on ? "开" : "关",
-		numlock_on ? "数字" : "导航",
-		numlock_on ? "" : "，NumLock 灯常亮");
+	if (changed) {
+		LOG_INF("主机 NumLock: %s（%s层生效）%s", numlock_on ? "开" : "关",
+			numlock_on ? "数字" : "导航",
+			numlock_on ? "" : "，NumLock 灯常亮");
+	}
 }

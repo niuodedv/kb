@@ -316,6 +316,9 @@ static void keymap_evt_cb(struct input_event *evt, void *user_data)
 	/* 长按 NumLock 3 秒 -> 进入配对模式（按键本身仍正常上报） */
 	if (evt->code == INPUT_KEY_NUMLOCK) {
 		if (pressed) {
+			/* 本地乐观切换：立即生效，主机 LED 报告到达后校正 */
+			hid_numlock_toggle_local();
+
 			k_timer_start(&pairing_timer,
 				      K_MSEC(PAIRING_HOLD_MS), K_NO_WAIT);
 		} else {
@@ -563,7 +566,13 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 	is_connected = false;
 	boot_mode = false;
 	hid_kb_state_reset();   /* 丢掉残留的按下状态 */
-	hid_numlock_set(true);  /* 断连复位为默认数字模式 */
+	/*
+	 * ⚠️ NumLock 状态不复位（保持跨连接/切档）：
+	 * USB 主机连接后【不会】像 BLE 主机那样主动同步初始 LED 状态，
+	 * 若在此复位，切到 USB 档时导航模式的 NumLock 指示灯会凭空熄灭，
+	 * 表现为「USB 链接时 NumLock 功能开启不常亮，与 BLE 不一致」。
+	 * 主机端 NumLock 状态通常不变，保持设备侧状态最接近真实。
+	 */
 	k_mutex_unlock(&hid_lock);
 
 	kb_led_force_off(1, 0);                     /* 熄灭 NumLock 指示灯 */
