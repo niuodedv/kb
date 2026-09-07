@@ -46,6 +46,17 @@ bool kb_ble_hid_is_advertising(void);
 /** @brief 当前 NumLock 状态（由主机 LED Output Report 同步，默认开） */
 bool kb_ble_hid_numlock_get(void);
 
+/**
+ * @brief 主动进入配对模式
+ *
+ * 清除本端全部绑定 -> 断开现有连接 -> 重新广播（无绑定 = 配对模式）。
+ * 状态灯转为蓝灯快闪；已配对的电脑被解绑，需在其蓝牙设置里删除设备后
+ * 重新搜索配对。触发方式：长按 NumLock 3 秒，或 shell 命令 `ble pair`。
+ *
+ * @retval 0 成功
+ */
+int kb_ble_hid_enter_pairing(void);
+
 #ifdef __cplusplus
 }
 #endif

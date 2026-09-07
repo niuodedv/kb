@@ -46,6 +46,30 @@ static const struct device *const vcc   = DEVICE_DT_GET(VCC_NODE);
 #define LED_BUDGET_MA      200   /* 全灯链总电流预算(mA)，超出则整体按比例限幅 */
 #define FADE_MS_MAX        5000
 
+/* ---- BLE 配对/连接状态指示灯 ----
+ * 占用 (1,1)（"/" 键）的 LED：独立颜色，不受全局色/按键灯影响。
+ * 闪烁节拍由 anim_handler 的 16ms tick 驱动（状态非 OFF 时持续 reschedule）。
+ */
+#define STATUS_LED_ROW 1
+#define STATUS_LED_COL 1
+#define STATUS_LED_IDX (led_index[STATUS_LED_ROW][STATUS_LED_COL])
+
+#define ST_SLOW_HALF_MS 500  /* 慢闪半周期：广播·有绑定（等待回连） */
+#define ST_FAST_HALF_MS 167  /* 快闪半周期：配对模式，约 3Hz，很显眼 */
+#define ST_PAIR_HALF_MS 250  /* 配对成功闪烁半周期 */
+
+/* 各状态的颜色（乘全局亮度后输出） */
+static const uint8_t st_color[][3] = {
+	[KB_LED_STATUS_OFF]        = {0, 0, 0},
+	[KB_LED_STATUS_CONNECTED]  = {0, 180, 0},   /* 绿：已连接 */
+	[KB_LED_STATUS_ADV_BONDED] = {0, 0, 200},   /* 蓝：等回连 */
+	[KB_LED_STATUS_PAIRING]    = {0, 0, 230},   /* 蓝：可配对 */
+	[KB_LED_STATUS_PAIR_OK]    = {0, 180, 0},   /* 绿：配对成功 */
+};
+
+static enum kb_led_status st_state = KB_LED_STATUS_OFF;
+static uint16_t st_phase;   /* 状态灯相位计数（每 tick +1） */
+
 /* ---- 每颗灯的状态 ---- */
 enum {
 	LED_ST_IDLE = 0,   /* 熄灭，不参与刷新 */
@@ -135,10 +159,22 @@ static void build_frame(struct led_rgb *px)
 
 	for (int i = 0; i < KB_LED_COUNT; i++) {
 		uint32_t v = (uint32_t)leds[i].level * scale256 / 256U;
+		uint8_t cr = br, cg = bg, cb = bb;
 
-		px[i].r = (uint16_t)br * v / 255U;
-		px[i].g = (uint16_t)bg * v / 255U;
-		px[i].b = (uint16_t)bb * v / 255U;
+		/* 状态灯：使用自己的颜色，不跟全局色 */
+		if ((i == (int)STATUS_LED_IDX) &&
+		    (st_state != KB_LED_STATUS_OFF)) {
+			cr = (uint8_t)((uint16_t)st_color[st_state][0] *
+				       cfg.brightness / 255U);
+			cg = (uint8_t)((uint16_t)st_color[st_state][1] *
+				       cfg.brightness / 255U);
+			cb = (uint8_t)((uint16_t)st_color[st_state][2] *
+				       cfg.brightness / 255U);
+		}
+
+		px[i].r = (uint16_t)cr * v / 255U;
+		px[i].g = (uint16_t)cg * v / 255U;
+		px[i].b = (uint16_t)cb * v / 255U;
 	}
 }
 
@@ -256,6 +292,54 @@ static void anim_handler(struct k_work *work)
 		}
 	}
 
+	/* ---- 状态指示灯：独立状态机（闪烁/常亮），优先于按键灯逻辑 ---- */
+	if (STATUS_LED_IDX != KB_LED_NONE) {
+		uint8_t st_level = 0;
+
+		switch (st_state) {
+		case KB_LED_STATUS_CONNECTED:
+			st_level = 255;
+			break;
+
+		case KB_LED_STATUS_ADV_BONDED:
+			st_level = (((uint32_t)st_phase * ANIM_PERIOD_MS) /
+				    ST_SLOW_HALF_MS) & 1 ? 255 : 0;
+			break;
+
+		case KB_LED_STATUS_PAIRING:
+			st_level = (((uint32_t)st_phase * ANIM_PERIOD_MS) /
+				    ST_FAST_HALF_MS) & 1 ? 255 : 0;
+			break;
+
+		case KB_LED_STATUS_PAIR_OK: {
+			/* 绿灯亮-灭交替三下（6 个半周期），结束自动回「已连接」 */
+			uint16_t half = ST_PAIR_HALF_MS / ANIM_PERIOD_MS;
+
+			if (st_phase >= (uint16_t)(half * 6U)) {
+				st_state = KB_LED_STATUS_CONNECTED;
+				st_level = 255;
+			} else {
+				st_level = ((st_phase / half) & 1) ? 0 : 255;
+			}
+			break;
+		}
+
+		default:
+			st_level = 0;
+			break;
+		}
+
+		st_phase++;
+
+		if (leds[STATUS_LED_IDX].level != st_level) {
+			leds[STATUS_LED_IDX].level = st_level;
+			changed = true;
+		}
+		if (st_level > 0) {
+			active = true;
+		}
+	}
+
 	if (cfg.effect == KB_LED_EFFECT_OFF) {
 		active = false;
 		memset(px, 0, sizeof(px));
@@ -286,7 +370,8 @@ static void anim_handler(struct k_work *work)
 	 * 单纯按住（HELD）时画面是静止的，WS2812 会自行锁存，不必重复刷新；
 	 * 松手时 kb_led_release 会再次提交工作项把动画拉起来。
 	 */
-	if (fading) {
+	/* 渐灭中或状态灯激活：都需要持续节拍驱动 */
+	if (fading || (st_state != KB_LED_STATUS_OFF)) {
 		k_work_reschedule(&anim_dwork, K_MSEC(ANIM_PERIOD_MS));
 	}
 }
@@ -297,6 +382,11 @@ int kb_led_press(uint8_t row, uint8_t col)
 
 	if (idx == KB_LED_NONE) {
 		/* EC11 旋钮按键等无灯键位：静默忽略 */
+		return 0;
+	}
+
+	if (idx == STATUS_LED_IDX) {
+		/* (1,1) 已被 BLE 状态灯征用，不做按键反馈 */
 		return 0;
 	}
 
@@ -344,6 +434,8 @@ void kb_led_all_off(void)
 		leds[i].level = 0;
 		leds[i].force = false;
 	}
+	st_state = KB_LED_STATUS_OFF;   /* 全灭同时清掉状态灯效 */
+	st_phase = 0;
 	dirty = true;
 	k_mutex_unlock(&lock);
 
@@ -383,6 +475,37 @@ int kb_led_force_off(uint8_t row, uint8_t col)
 	leds[idx].force = false;
 	leds[idx].state = LED_ST_IDLE;
 	leds[idx].level = 0;
+	dirty = true;
+	k_mutex_unlock(&lock);
+
+	k_work_reschedule(&anim_dwork, K_NO_WAIT);
+
+	return 0;
+}
+
+int kb_led_status_set(enum kb_led_status status)
+{
+	if ((uint8_t)status >= ARRAY_SIZE(st_color)) {
+		return -EINVAL;
+	}
+
+	k_mutex_lock(&lock, K_FOREVER);
+	if (st_state == status) {
+		/* 相同状态：忽略，不重置闪烁相位 */
+		k_mutex_unlock(&lock);
+		return 0;
+	}
+
+	st_state = status;
+	st_phase = 0;
+
+	if (STATUS_LED_IDX != KB_LED_NONE) {
+		leds[STATUS_LED_IDX].force = false;
+		if (status == KB_LED_STATUS_OFF) {
+			leds[STATUS_LED_IDX].state = LED_ST_IDLE;
+			leds[STATUS_LED_IDX].level = 0;
+		}
+	}
 	dirty = true;
 	k_mutex_unlock(&lock);
 

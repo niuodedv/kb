@@ -129,6 +129,33 @@ static struct bt_conn *cur_conn;
 static bool boot_mode;    /* 主机选择了 Boot Protocol（此时键盘报告走 boot 特征） */
 static bool numlock_on = true;
 
+/* ---- 配对管理 ----
+ * has_bond：本端是否存有已配对主机（决定状态灯慢闪/快闪）。
+ * 长按 NumLock 3 秒 -> 清除全部绑定并重新广播（配对模式，蓝灯快闪）。
+ */
+#define PAIRING_HOLD_MS 3000
+static bool has_bond;
+
+static void pairing_timer_expired(struct k_timer *timer);
+
+K_TIMER_DEFINE(pairing_timer, pairing_timer_expired, NULL);
+
+/* 统计已保存的绑定主机数（本 SDK 没有 bt_bond_count，用 bt_foreach_bond 实现） */
+static void bond_count_cb(const struct bt_bond_info *info, void *user_data)
+{
+	ARG_UNUSED(info);
+	(*(uint8_t *)user_data)++;
+}
+
+static uint8_t saved_bond_count(void)
+{
+	uint8_t n = 0;
+
+	bt_foreach_bond(BT_ID_DEFAULT, bond_count_cb, &n);
+
+	return n;
+}
+
 /* 当前按下的键：修饰键位图 + 最多 6 个键值（6KRO） */
 struct kbd_state {
 	uint8_t modifier;
@@ -203,7 +230,14 @@ static void advertising_start(void)
 	}
 
 	is_advertising = true;
-	LOG_INF("BLE 广播已启动，设备名: %s（可在电脑上搜索配对）", DEVICE_NAME);
+	LOG_INF("BLE 广播已启动，设备名: %s（%s）", DEVICE_NAME,
+		has_bond ? "等待已配对电脑回连" : "配对模式：可被新主机搜索");
+	/*
+	 * 状态灯：有绑定 -> 蓝灯慢闪（等回连）；
+	 *          无绑定 -> 蓝灯快闪（配对模式，等待新主机）。
+	 */
+	kb_led_status_set(has_bond ? KB_LED_STATUS_ADV_BONDED
+				   : KB_LED_STATUS_PAIRING);
 }
 
 static void advertising_stop(void)
@@ -370,6 +404,16 @@ static void keymap_evt_cb(struct input_event *evt, void *user_data)
 
 	bool pressed = (evt->value != 0);
 
+	/* 长按 NumLock 3 秒 -> 进入配对模式（按键本身仍正常上报） */
+	if (evt->code == INPUT_KEY_NUMLOCK) {
+		if (pressed) {
+			k_timer_start(&pairing_timer,
+				      K_MSEC(PAIRING_HOLD_MS), K_NO_WAIT);
+		} else {
+			k_timer_stop(&pairing_timer);
+		}
+	}
+
 	/* 旋钮按键：走 Consumer 报告，不是普通键盘键 */
 	if (evt->code == INPUT_KEY_MUTE) {
 		if (!pressed) {
@@ -482,6 +526,7 @@ static void mode_cb(enum kb_mode prev, enum kb_mode now, void *user_data)
 		k_mutex_unlock(&hid_lock);
 
 		advertising_stop();
+		kb_led_status_set(KB_LED_STATUS_OFF);   /* 非 BLE 档：状态灯熄灭 */
 
 		if (conn != NULL) {
 			int err = bt_conn_disconnect(
@@ -493,6 +538,45 @@ static void mode_cb(enum kb_mode prev, enum kb_mode now, void *user_data)
 			LOG_INF("离开 BLE 模式：广播已停止");
 		}
 	}
+}
+
+/* ==================== 主动配对 ====================
+ * 触发：长按 NumLock 3 秒（pairing_timer 计时），或 shell 命令 `ble pair`。
+ * 动作：清除本端全部绑定 -> 断开现有连接 -> 重新广播（无绑定 = 配对模式）。
+ * 注意：已配对的电脑会被解绑，必须在其蓝牙设置里删除设备后重新搜索配对。
+ */
+
+static void pairing_timer_expired(struct k_timer *timer)
+{
+	ARG_UNUSED(timer);
+
+	if (kb_mode_get() != KB_MODE_BLE) {
+		return;
+	}
+
+	LOG_INF("NumLock 长按 %u 秒 -> 进入配对模式",
+		(unsigned)(PAIRING_HOLD_MS / 1000));
+	(void)kb_ble_hid_enter_pairing();
+}
+
+int kb_ble_hid_enter_pairing(void)
+{
+	LOG_INF("进入配对模式：清除全部绑定 -> 重新广播");
+
+	has_bond = false;
+
+	/*
+	 * bt_unpair 会逐个终止与被解绑设备的连接，
+	 * 由此触发 disconnected_cb -> 重新广播（灯效转配对快闪）。
+	 */
+	(void)bt_unpair(BT_ID_DEFAULT, BT_ADDR_LE_ANY);
+
+	/* 若本就未连接，unpair 不会触发断连回调，这里显式保证处于广播态
+	 * （stop/start 均幂等，重复调用无害）。 */
+	advertising_stop();
+	advertising_start();
+
+	return 0;
 }
 
 /* ==================== 连接管理 ==================== */
@@ -530,6 +614,8 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 	if (hids_err) {
 		LOG_ERR("通知 HIDS 连接失败: %d", hids_err);
 	}
+
+	kb_led_status_set(KB_LED_STATUS_CONNECTED);   /* 绿灯常亮 */
 
 	LOG_INF("BLE 已连接: %s", addr);
 }
@@ -594,12 +680,19 @@ static void pairing_complete_cb(struct bt_conn *conn, bool bonded)
 {
 	ARG_UNUSED(conn);
 
+	has_bond = true;
+	/* 绿灯闪三下，结束后自动回到「已连接」常亮 */
+	kb_led_status_set(KB_LED_STATUS_PAIR_OK);
+
 	LOG_INF("配对完成 (bonded=%d)，绑定信息已写入 Flash", bonded ? 1 : 0);
 }
 
 static void pairing_failed_cb(struct bt_conn *conn, enum bt_security_err reason)
 {
 	ARG_UNUSED(conn);
+
+	/* 配对失败：回到配对模式快闪，等待重试 */
+	kb_led_status_set(KB_LED_STATUS_PAIRING);
 
 	LOG_WRN("配对失败: %d", reason);
 }
@@ -837,6 +930,10 @@ int kb_ble_hid_init(void)
 		}
 	}
 
+	/* 有绑定 -> 蓝灯慢闪等回连；无绑定 -> 蓝灯快闪提示可配对 */
+	has_bond = (saved_bond_count() > 0);
+	LOG_INF("已保存绑定主机数: %u", (unsigned int)saved_bond_count());
+
 	err = kb_mode_register_cb(mode_cb, NULL);
 	if (err) {
 		LOG_ERR("订阅模式变化失败: %d", err);
@@ -878,6 +975,9 @@ static int cmd_ble_status(const struct shell *sh, size_t argc, char **argv)
 		    numlock_on ? "开(数字层)" : "关(导航层)");
 	shell_print(sh, "当前模式: %s（仅 BLE 档才从蓝牙发出）",
 		    kb_mode_name(kb_mode_get()));
+	shell_print(sh, "绑定状态: %s",
+		    has_bond ? "已有配对主机（等回连，蓝灯慢闪）"
+			     : "无（配对模式，蓝灯快闪）");
 	shell_print(sh, "按下状态: 修饰键=0x%02X 键值=%02X %02X %02X %02X %02X %02X",
 		    kbd_state.modifier, kbd_state.keys[0], kbd_state.keys[1],
 		    kbd_state.keys[2], kbd_state.keys[3], kbd_state.keys[4],
@@ -886,9 +986,24 @@ static int cmd_ble_status(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_ble_pair(const struct shell *sh, size_t argc, char **argv)
+{
+	int err;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	err = kb_ble_hid_enter_pairing();
+	shell_print(sh, "已进入配对模式（清除绑定+重新广播），err=%d", err);
+
+	return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_ble,
 	SHELL_CMD_ARG(status, NULL, "显示 BLE 连接/广播/NumLock 状态",
 		      cmd_ble_status, 1, 0),
+	SHELL_CMD_ARG(pair, NULL, "清除全部绑定并进入配对模式",
+		      cmd_ble_pair, 1, 0),
 	SHELL_SUBCMD_SET_END
 );
 

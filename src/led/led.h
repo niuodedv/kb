@@ -26,6 +26,24 @@ extern "C" {
 /** @brief 该键位没有 LED（6 个空位 + EC11 旋钮按键） */
 #define KB_LED_NONE  0xFF
 
+/**
+ * @brief BLE 配对/连接状态灯效（占用 (1,1) "/" 键位的 LED）
+ *
+ * 该键位的按键灯反馈被状态指示征用（按下不再点亮）。
+ */
+enum kb_led_status {
+	/** 熄灭（非 BLE 档或未要求显示） */
+	KB_LED_STATUS_OFF = 0,
+	/** 已连接：绿灯常亮 */
+	KB_LED_STATUS_CONNECTED,
+	/** 广播中且已有绑定（等待已配对电脑回连）：蓝灯慢闪 */
+	KB_LED_STATUS_ADV_BONDED,
+	/** 配对模式（无绑定、可被新主机配对）：蓝灯快闪 */
+	KB_LED_STATUS_PAIRING,
+	/** 配对成功：绿灯闪三下后自动回到「已连接」常亮 */
+	KB_LED_STATUS_PAIR_OK,
+};
+
 /** @brief 灯效 */
 enum kb_led_effect {
 	/** 默认：按下点亮、松手渐灭 */
@@ -96,6 +114,17 @@ int kb_led_force_on(uint8_t row, uint8_t col);
  * @brief 取消某键 LED 强制常亮，恢复为熄灭/默认按键行为
  */
 int kb_led_force_off(uint8_t row, uint8_t col);
+
+/**
+ * @brief 设置 BLE 配对/连接状态灯效（见 enum kb_led_status）
+ *
+ * 非阻塞，可在任意线程调用。相同状态重复设置会被忽略（不重置闪烁相位）。
+ * 状态灯占用 (1,1) 键位：该灯有独立颜色（绿/蓝），不受 kb_led_set_color 影响。
+ *
+ * @retval 0 成功
+ * @retval -EINVAL 非法状态值
+ */
+int kb_led_status_set(enum kb_led_status status);
 
 /** @brief 设置全局颜色（默认 0,255,0 纯绿） */
 int kb_led_set_color(uint8_t r, uint8_t g, uint8_t b);

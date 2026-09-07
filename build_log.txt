@@ -1,14 +1,15 @@
 [0/5] Performing build step for 'kb'
-[1/7] Building C object CMakeFiles/app.dir/src/mode/mode.c.obj
-[2/7] Linking C static library app\libapp.a
-[3/7] Linking C executable zephyr\zephyr_pre0.elf
-[4/7] Generating linker.cmd
-[5/7] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
-[6/7] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
-[7/7] Linking C executable zephyr\zephyr.elf
+[1/8] Building C object CMakeFiles/app.dir/src/ble/ble_hid.c.obj
+[2/8] Linking C static library app\libapp.a
+[3/8] Linking C executable zephyr\zephyr_pre0.elf
+[4/8] Generating linker.cmd
+[5/8] Generating isr_tables.c, isr_tables_vt.ld, isr_tables_swi.ld
+[6/8] Building C object zephyr/CMakeFiles/zephyr_final.dir/misc/empty_file.c.obj
+[7/8] Building C object zephyr/CMakeFiles/zephyr_final.dir/isr_tables.c.obj
+[8/8] Linking C executable zephyr\zephyr.elf
 Memory region         Used Size  Region Size  %age Used
-           FLASH:      252412 B      1016 KB     24.26%
-             RAM:       43116 B       256 KB     16.45%
+           FLASH:      254056 B      1016 KB     24.42%
+             RAM:       43180 B       256 KB     16.47%
         IDT_LIST:          0 GB        32 KB      0.00%
 Generating files from F:/Desktop/32project/kb/build/kb/zephyr/zephyr.elf for board: kb
 [2/5] No install step for 'kb'
