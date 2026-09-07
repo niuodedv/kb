@@ -1,7 +1,7 @@
 ================================================================
 蓝牙小键盘项目 —— 长期记事本（协作备忘 / 已核实事实与决策）
 ================================================================
-最后更新：2026-09-04
+最后更新：2026-09-07
 项目路径：f:/Desktop/32project/kb
 原理图：SCH_蓝牙小键盘_2026-03-28.pdf
         共 18 页；第 1 页为主图（主控/电源/USB/矩阵/屏幕），
@@ -33,6 +33,36 @@
   prj.conf ：目前为空
   src/main.c：只有空 main()
   构建方式 ：west build -b kb（需先进入 NCS 工具链环境）
+
+  ===== 编译命令（已核实可直接用，勿每次重新推理）=====
+  ⚠️ 关键坑：当前 PowerShell 执行会话没有 nCS 环境，直接 `west` 会报
+     ModuleNotFoundError: No module named 'west'。原因：
+     - D:/ncs/v3.2.3/zephyr/zephyr-env.cmd 只 set ZEPHYR_BASE 并 call
+       %userprofile%\zephyrrc.cmd，而该文件【不存在】→ 环境没初始化；
+     - D:/ncs/toolchains/.../Scripts/west.exe 包装器也未关联正确 Python。
+     ⇒ 正确做法：用工具链 venv 的 python 直接 `python -m west`，并在同一
+       cmd 进程链里设好环境变量（务必用 cmd /c "… && …" 串起来，不能分开
+       执行，否则环境变量对后续命令不生效）。
+     ⇒ 命令里【不要加 | tail】（PowerShell 无 tail，会直接报错导致整条命令不执行）。
+
+  工具链关键路径（D:/ncs/toolchains/fd21892d0f）：
+    - venv python：opt\bin\python.exe（west 包在 opt\bin\Lib\site-packages\west）
+    - cmake / ninja / dtc：opt\bin\
+    - ARM 工具链(Zephyr SDK)：opt\zephyr-sdk\arm-zephyr-eabi\bin\arm-zephyr-eabi-gcc.exe
+
+  【增量编译（日常，快）】在 CodeBuddy execute_command 直接运行整行：
+  cmd /c "set ZEPHYR_BASE=D:\ncs\v3.2.3\zephyr&& set ZEPHYR_SDK_INSTALL_DIR=D:\ncs\toolchains\fd21892d0f\opt\zephyr-sdk&& set ZEPHYR_TOOLCHAIN_VARIANT=zephyr&& set PATH=D:\ncs\toolchains\fd21892d0f\opt\bin;D:\ncs\toolchains\fd21892d0f\opt\bin\Scripts;%PATH%&& cd /d f:\Desktop\32project\kb && D:\ncs\toolchains\fd21892d0f\opt\bin\python.exe -m west build -b kb"
+
+  【全量/pristine（新增 .c/.h 或改 Kconfig/prj.conf 后用，确保拾取新文件）】：
+  把上面末尾的 `-b kb` 改为 `-p always -b kb` 即可。
+
+  产物：build/merged.hex（烧录用）。
+  已知无害警告：SHELL_BACKEND_RTT 依赖未满足；'injoinic,ip5306' unknown vendor prefix。
+  更省事：仓库根目录已提供 build.bat（默认增量）/ build.bat -p（全量）。
+  在 CodeBuddy execute_command 里用（注意执行会话 cwd 不是项目根，必须带绝对路径）：
+    cmd /c "f:\Desktop\32project\kb\build.bat"          （增量）
+    cmd /c "f:\Desktop\32project\kb\build.bat -p"       （全量）
+  完整独立文档（含环境路径、踩坑、命令全文、验证标准）见根目录 编译步骤.txt。
 
   ⚠️ 版本红线（极易踩坑）：
    - 本版本【已经没有 kscan 子系统】。CONFIG_KSCAN 不存在，
@@ -193,9 +223,10 @@
   [ ] EC11 编码器（音量 / 静音）
   [ ] 屏幕（SPI + LVGL）
   [ ] USB / BLE 双模切换
-  [ ] HID 上报与 NumLock 双功能层
+  [x] HID 上报与 NumLock 双功能层（BLE 已通；NumLock 方向模式 LED 常亮已实现）
   [ ] 上位机协议（时间同步 / LED 颜色）
   [ ] 低功耗与电池管理
+  [x] BLE HID 编译通过（含 NumLock 指示灯改动，2026-09-07；构建见【1】编译命令小节）
 
 ----------------------------------------------------------------
 【12】临时文件（可随时删除）

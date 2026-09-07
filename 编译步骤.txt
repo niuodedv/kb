@@ -1,0 +1,65 @@
+================================================================
+蓝牙小键盘 —— 编译步骤（nRF Connect SDK v3.2.3）
+================================================================
+最后更新：2026-09-07
+项目路径：f:/Desktop/32project/kb
+目标板  ：kb（boards/kb/kb/kb.dts，nRF52840）
+
+----------------------------------------------------------------
+【1】环境路径（已核实）
+----------------------------------------------------------------
+  nCS 根目录     ：D:/ncs/v3.2.3
+    zephyr       ：D:/ncs/v3.2.3/zephyr
+  工具链目录     ：D:/ncs/toolchains/fd21892d0f
+    - venv python：D:/ncs/toolchains/fd21892d0f/opt/bin/python.exe
+                   （west 包在 opt\bin\Lib\site-packages\west）
+    - cmake/ninja/dtc：D:/ncs/toolchains/fd21892d0f/opt/bin\
+    - ARM 工具链(Zephyr SDK)：
+        D:/ncs/toolchains/fd21892d0f/opt/zephyr-sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc.exe
+  构建方式       ：west build -b kb（必须先在 NCS 工具链环境下）
+
+----------------------------------------------------------------
+【2】关键踩坑（为什么不能直接用 west）
+----------------------------------------------------------------
+  ⚠️ 当前 CodeBuddy 执行会话（PowerShell 临时会话）没有 nCS 环境：
+     - 直接 `west` → ModuleNotFoundError: No module named 'west'
+     - 原因1：D:/ncs/v3.2.3/zephyr/zephyr-env.cmd 只 set ZEPHYR_BASE
+       并 call %userprofile%\zephyrrc.cmd，而该文件【不存在】→ 环境没初始化
+     - 原因2：D:/ncs/toolchains/.../Scripts/west.exe 包装器未关联正确 Python
+  ✅ 正确做法：用工具链 venv 的 python 直接 `python -m west`，并在同一
+     cmd 进程链里设好环境变量（务必用 cmd /c "… && …" 串起来，
+     不能分开执行，否则环境变量对后续命令不生效）。
+  ⚠️ 命令里【不要加 | tail】（PowerShell 无 tail，会直接报错导致命令不执行）。
+
+----------------------------------------------------------------
+【3】编译命令（在 CodeBuddy execute_command 直接运行）
+----------------------------------------------------------------
+  增量编译（日常，快）：
+  cmd /c "set ZEPHYR_BASE=D:\ncs\v3.2.3\zephyr&& set ZEPHYR_SDK_INSTALL_DIR=D:\ncs\toolchains\fd21892d0f\opt\zephyr-sdk&& set ZEPHYR_TOOLCHAIN_VARIANT=zephyr&& set PATH=D:\ncs\toolchains\fd21892d0f\opt\bin;D:\ncs\toolchains\fd21892d0f\opt\bin\Scripts;%PATH%&& cd /d f:\Desktop\32project\kb && D:\ncs\toolchains\fd21892d0f\opt\bin\python.exe -m west build -b kb"
+
+  全量/pristine（新增 .c/.h 或改 Kconfig/prj.conf 后用，确保拾取新文件）：
+  把上面末尾的 `-b kb` 改为 `-p always -b kb` 即可。
+
+  产物：build/merged.hex（烧录用）。
+
+----------------------------------------------------------------
+【4】一键脚本 build.bat（推荐）
+----------------------------------------------------------------
+  仓库根目录已提供 build.bat，封装了上面全部环境激活与 west 调用。
+  注意：执行会话 cwd 不是项目根，必须带绝对路径调用：
+    cmd /c "f:\Desktop\32project\kb\build.bat"          （增量）
+    cmd /c "f:\Desktop\32project\kb\build.bat -p"       （全量）
+  （bat 内部已 cd /d 到项目目录，默认增量、-p 全量。）
+
+----------------------------------------------------------------
+【5】已知无害警告
+----------------------------------------------------------------
+  - SHELL_BACKEND_RTT 依赖未满足（不影响构建，RTT 调试仍可用）
+  - 'injoinic,ip5306' unknown vendor prefix（电源管理 IC 兼容字符串未注册）
+  这两条 warning 可忽略，exit code 0 即成功。
+
+----------------------------------------------------------------
+【6】验证编译成功的标准
+----------------------------------------------------------------
+  看到 "[NNN/NNN] Linking C executable zephyr\zephyr.elf"
+  及 "Generating ../merged.hex" 即成功。
