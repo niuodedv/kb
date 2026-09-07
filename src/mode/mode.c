@@ -20,6 +20,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include <zephyr/devicetree.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/adc.h>
 #include <zephyr/kernel.h>
@@ -27,21 +28,27 @@
 
 LOG_MODULE_REGISTER(mode, LOG_LEVEL_INF);
 
-#define ADC_NODE DT_NODELABEL(adc)
-#define CH_NODE  DT_CHILD(ADC_NODE, channel_5)
-
-BUILD_ASSERT(DT_NODE_HAS_STATUS(ADC_NODE, okay), "未使能 SAADC：请检查设备树 &adc");
-BUILD_ASSERT(DT_NODE_EXISTS(CH_NODE), "未找到 &adc 的 channel@5 子节点");
-
-static const struct device *const adc_dev = DEVICE_DT_GET(ADC_NODE);
-
 /*
- * 通道参数全部来自设备树（kb.dts 的 &adc / channel@5），
- * 用 ADC_CHANNEL_CFG_DT 生成静态初始化器，避免参数散落在 C 代码里。
+ * 采用 Zephyr 官方 adc_dt 路径（samples/drivers/adc/adc_dt），
+ * 用 adc_dt_spec 描述通道（来自 kb.dts 的 &adc / channel@5），
+ * 走 adc_read_dt / adc_raw_to_millivolts_dt，由驱动按 DT 配置
+ * 处理增益 / 参考 / 分辨率与 raw 对齐，
+ * 规避手写 adc_read + 手写 adc_raw_to_millivolts 在 nRF 上把 16 位
+ * raw 误当 12 位分辨率、导致满量程饱和读数（~115200mV）使三档
+ * 永远判 BLE 的 Bug。
  */
-static const struct adc_channel_cfg ch_cfg = ADC_CHANNEL_CFG_DT(CH_NODE);
+#define MODE_ADC_NODE  DT_NODELABEL(adc)
+#define MODE_CH_NODE   DT_CHILD(MODE_ADC_NODE, channel_5)
 
-#define ADC_RESOLUTION DT_PROP(CH_NODE, zephyr_resolution)
+static const struct adc_dt_spec mode_adc = {
+	.dev = DEVICE_DT_GET(MODE_ADC_NODE),
+	.channel_id = DT_REG_ADDR(MODE_CH_NODE),
+	.channel_cfg_dt_node_exists = 1,
+	.channel_cfg = ADC_CHANNEL_CFG_DT(MODE_CH_NODE),
+	.vref_mv = 0,
+	.resolution = DT_PROP(MODE_CH_NODE, zephyr_resolution),
+	.oversampling = 0,
+};
 
 /* ---- 判档阈值（mV）---- */
 #define MV_USB_MAX  500
@@ -54,8 +61,9 @@ static const struct adc_channel_cfg ch_cfg = ADC_CHANNEL_CFG_DT(CH_NODE);
 #define INIT_SAMPLE_N   3
 #define POLL_PERIOD_MS  100
 #define DEBOUNCE_N      3
-/* 心跳周期：每 30 秒打一条存活日志，日志时间戳即可看出系统是何时卡死的 */
-#define HEARTBEAT_POLLS (30000U / POLL_PERIOD_MS)
+/* 心跳周期：采集期临时 5 秒一条（原 30 秒），日志里带 raw 原始值用于三档标定，
+ * 标定完成后可改回 (30000U / POLL_PERIOD_MS) */
+#define HEARTBEAT_POLLS (5000U / POLL_PERIOD_MS)
 
 #define CB_SLOTS 4
 
@@ -127,17 +135,22 @@ static enum kb_mode classify(int32_t mv)
 
 static int sample_mv(int32_t *mv, int32_t *raw)
 {
-	int32_t raw_val;
+	/* ⚠️ nRF SAADC 每个采样是 int16_t，驱动每样本只写 2 字节。
+	 * 之前这里用 int32_t，高 16 位是栈上未初始化的残留值（实测恒 2），
+	 * 导致 raw = 0x20000 + 真实值（如 134823=131072+3751），
+	 * mv 恒 ~115200mV 恒判 BLE —— 这就是三挡切换失效的根因！ */
+	int16_t raw_val;
 	int err;
 	struct adc_sequence seq = {
-		.channels = BIT(ch_cfg.channel_id),
 		.buffer = &raw_val,
+		/* buffer size in bytes, not number of samples */
 		.buffer_size = sizeof(raw_val),
-		.resolution = ADC_RESOLUTION,
-		.oversampling = 0,
 	};
 
-	err = adc_read(adc_dev, &seq);
+	/* 用 DT spec 初始化序列，确保 raw 对齐/分辨率与驱动期望一致 */
+	adc_sequence_init_dt(&mode_adc, &seq);
+
+	err = adc_read_dt(&mode_adc, &seq);
 	if (err) {
 		return err;
 	}
@@ -149,9 +162,8 @@ static int sample_mv(int32_t *mv, int32_t *raw)
 	if (mv != NULL) {
 		int32_t mv_val = raw_val;
 
-		/* 内部参考 600mV / 增益 1/6 -> 满量程 3600mV */
-		err = adc_raw_to_millivolts((int32_t)adc_ref_internal(adc_dev),
-					    ch_cfg.gain, ADC_RESOLUTION, &mv_val);
+		/* 由 spec 自动取增益/参考，得到真实毫伏（满量程 ~3600mV） */
+		err = adc_raw_to_millivolts_dt(&mode_adc, &mv_val);
 		if (err) {
 			return err;
 		}
@@ -230,6 +242,7 @@ static int initial_scan(void)
 static void poll_handler(struct k_work *work)
 {
 	int32_t mv;
+	int32_t raw;
 	int err;
 	enum kb_mode m;
 
@@ -241,7 +254,7 @@ static void poll_handler(struct k_work *work)
 		return;
 	}
 
-	err = sample_mv(&mv, NULL);
+	err = sample_mv(&mv, &raw);
 	if (err) {
 		LOG_ERR("MODE 采样失败: %d", err);
 		k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
@@ -271,8 +284,8 @@ static void poll_handler(struct k_work *work)
 	}
 
 	if ((++poll_count % HEARTBEAT_POLLS) == 0) {
-		LOG_INF("心跳: 模式=%s MODE=%d mV（日志停止说明系统已卡死或掉电）",
-			kb_mode_name(cur_mode), (int)mv);
+		LOG_INF("心跳: 模式=%s MODE=%d mV raw=%d（日志停止说明系统已卡死或掉电）",
+			kb_mode_name(cur_mode), (int)mv, (int)raw);
 	}
 
 	k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
@@ -351,8 +364,8 @@ int kb_mode_init(void)
 {
 	int err;
 
-	if (!device_is_ready(adc_dev)) {
-		LOG_ERR("SAADC 设备未就绪: %s", adc_dev->name);
+	if (!adc_is_ready_dt(&mode_adc)) {
+		LOG_ERR("SAADC 设备未就绪");
 		return -ENODEV;
 	}
 
@@ -362,7 +375,7 @@ int kb_mode_init(void)
 		return err;
 	}
 
-	err = adc_channel_setup(adc_dev, &ch_cfg);
+	err = adc_channel_setup_dt(&mode_adc);
 	if (err) {
 		LOG_ERR("ADC 通道配置失败: %d", err);
 		return err;
@@ -375,11 +388,11 @@ int kb_mode_init(void)
 
 	k_work_init_delayable(&poll_work, poll_handler);
 
-	LOG_INF("模式检测就绪: %s 通道%u（内部参考 %umV，增益 1/6，%u 位，满分度 %umV）",
-		adc_dev->name, (unsigned int)ch_cfg.channel_id,
-		(unsigned int)adc_ref_internal(adc_dev),
-		(unsigned int)ADC_RESOLUTION,
-		(unsigned int)((uint32_t)adc_ref_internal(adc_dev) * 6U));
+	LOG_INF("模式检测就绪: %s 通道%u（内部参考 %umV，增益 1/6，%u 位，满分度 ~%umV）",
+		mode_adc.dev->name, (unsigned int)mode_adc.channel_id,
+		(unsigned int)adc_ref_internal(mode_adc.dev),
+		(unsigned int)mode_adc.resolution,
+		(unsigned int)((uint32_t)adc_ref_internal(mode_adc.dev) * 6U));
 
 	err = initial_scan();
 	if (err) {
