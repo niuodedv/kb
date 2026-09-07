@@ -199,6 +199,31 @@
 	};
 };
 
+/*
+ * USB HID（三模开关 USB 档，详见 usb 通信.txt）
+ *
+ * nRF52840 内置 USB Full-Speed 设备控制器，原理图 D-/D+ 经 R23/R24(0Ω)
+ * + USBLC6-2SC6 接入模块脚 29/31。板上无 VBUS 检测引脚，软件直接
+ * usbd_enable()，插入 USB 线后由主机枚举。
+ * hid_kbd 节点：zephyr,hid-device 绑定；报告描述符由 src/usb/usb_hid.c
+ * 调 hid_device_register() 传入（与 BLE 共用 hid_keymap.c 里那份）。
+ */
+&usbd {
+	status = "okay";
+};
+
+/ {
+	hid_kbd: hid_kbd {
+		compatible = "zephyr,hid-device";
+		label = "HID0";
+		protocol-code = "keyboard";      /* 支持 Boot 协议 */
+		in-report-size = <8>;            /* 最长输入报告：键盘 8 字节 */
+		in-polling-period-us = <1000>;   /* 1ms 轮询 */
+		out-report-size = <1>;           /* NumLock LED 输出报告走 OUT 管道 */
+		out-polling-period-us = <1000>;
+	};
+};
+
 /* IP5306-I2C 电源管理芯片（SDA=P1.00 / SCL=P0.24，板载 10k 上拉） */
 &i2c0 {
 	status = "okay";

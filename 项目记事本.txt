@@ -265,9 +265,22 @@
   [ ] LED（WS2812）链路与按下点亮/松手渐灭
   [ ] EC11 编码器（音量 / 静音）
   [ ] 屏幕（SPI + LVGL）
-  [ ] USB / BLE 双模切换（USB HID 方案已定稿见 usb 通信.txt，尚未实施；实施时按
-      其【11】顺序：先抽公共翻译层 hid_keymap -> dts/prj.conf 使能 NEXT 栈 ->
-      键盘上报（⚠️ USB 报文首字节要带 Report ID，与 BLE 不同）-> Consumer/NumLock）
+  [ ] USB / BLE 双模切换（代码已实现待实板验证 2026-09-07；方案见 usb 通信.txt）
+      已完成：公共翻译层 src/hid/hid_keymap.c（ble/usb 共用）+ src/usb/usb_hid.c
+      （NEXT 栈，USBD HID，报文首字节带 Report ID / Boot 模式 8 字节）
+      dts: &usbd + hid_kbd(zephyr,hid-device, out 管道传 LED)；prj.conf: NEXT 栈
+      ⚠️ VID=0x2FE3 暂用样例值，量产前必须换正式 VID/PID
+      ⚠️ 上板按 usb 通信.txt【10】D01 验证：枚举/按键输出/组合键/6KRO
+      【卡死修复 2026-09-07】首版上电无条件 usbd_enable 导致蓝牙模式也卡死：
+        nRF52840 上 USB（SOF 需 HFCLK）与 BLE 控制器（MPSL）同时活跃有时钟
+        仲裁约束。修复1：USB 控制器只在 USB 档 usbd_enable、离开即 usbd_disable
+        （与三模开关互斥语义一致，init 仅组装，上电即 USB 档则直接使能）。
+        修复2：hid_device_submit_report 可能阻塞，绝不能在 input 线程直接调用
+        （按键全停）。改为专用发送线程（1024 栈，优先级 7）+ 8 深 msgq，
+        input 回调只入队；切档时 k_msgq_purge 丢弃残留报文。
+        修复3：切 USB 档枚举时 UDC 驱动线程 udc_nrfx 栈溢出（MPU FAULT /
+        Stack overflow）——CONFIG_UDC_NRF_THREAD_STACK_SIZE 默认仅 512B，
+        加大到 2048；usb_tx 线程栈 1024→1536 预防。
   [x] HID 上报与 NumLock 双功能层（BLE 已通；NumLock 方向模式 LED 常亮已实现）
   [ ] 上位机协议（时间同步 / LED 颜色）
   [ ] 低功耗与电池管理

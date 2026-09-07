@@ -33,6 +33,7 @@
 #include <errno.h>
 #include <string.h>
 
+#include "hid/hid_keymap.h"
 #include "knob/knob.h"
 #include "led/led.h"
 #include "mode/mode.h"
@@ -95,13 +96,7 @@ enum {
 /* Keypad 的句点用法：zephyr/usb/class/hid.h 的枚举里没有，按 USB HID 标准补齐 */
 #define HID_KEY_KP_DOT 0x63
 
-/* ---- Consumer 用法（Usage Page 0x0C）---- */
-#define CONSUMER_USAGE_VOL_UP   0x00E9
-#define CONSUMER_USAGE_VOL_DOWN 0x00EA
-#define CONSUMER_USAGE_MUTE     0x00E2
-
-/* LED Output Report 的位定义（Usage Page 0x08） */
-#define LED_BIT_NUM_LOCK BIT(0)
+/* Consumer 用法 / LED 位图 / Report ID 已移入公共层 hid/hid_keymap.h */
 
 /* HIDS 实例：参数是各输入/输出报告的【长度】，用于算每连接的上下文内存 */
 BT_HIDS_DEF(hids_obj,
@@ -127,7 +122,6 @@ static bool is_advertising;
  */
 static struct bt_conn *cur_conn;
 static bool boot_mode;    /* 主机选择了 Boot Protocol（此时键盘报告走 boot 特征） */
-static bool numlock_on = true;
 
 /* ---- 配对管理 ----
  * has_bond：本端是否存有已配对主机（决定状态灯慢闪/快闪）。
@@ -156,41 +150,8 @@ static uint8_t saved_bond_count(void)
 	return n;
 }
 
-/* 当前按下的键：修饰键位图 + 最多 6 个键值（6KRO） */
-struct kbd_state {
-	uint8_t modifier;
-	uint8_t keys[KEY_PRESS_MAX];
-};
-
-static struct kbd_state kbd_state;
-
-/*
- * NumLock 双功能层（矩阵按键.txt 6.3 / BLE通信.txt 5.1）
- *
- * 设备树的 keymap 只放了「数字层」（INPUT_KEY_KP*）。NumLock 关闭时要发导航键，
- * 这一层的切换放在本表做；其余键（/ * - + Enter NumLock 5）两层一样，
- * 直接走 Zephyr 官方的 input_to_hid_code() 翻译。
- *
- * ⚠️ INPUT_KEY_KPDOT 恰好不在官方映射表里（会返回 -1），必须在本表中显式给出。
- */
-struct dual_key {
-	uint16_t input_code;
-	uint8_t hid_num;   /* NumLock 开：数字层 */
-	uint8_t hid_nav;   /* NumLock 关：导航层 */
-};
-
-static const struct dual_key dual_keys[] = {
-	{INPUT_KEY_KP7,   HID_KEY_KP_7,   HID_KEY_HOME},
-	{INPUT_KEY_KP8,   HID_KEY_KP_8,   HID_KEY_UP},
-	{INPUT_KEY_KP9,   HID_KEY_KP_9,   HID_KEY_PAGEUP},
-	{INPUT_KEY_KP4,   HID_KEY_KP_4,   HID_KEY_LEFT},
-	{INPUT_KEY_KP6,   HID_KEY_KP_6,   HID_KEY_RIGHT},
-	{INPUT_KEY_KP1,   HID_KEY_KP_1,   HID_KEY_END},
-	{INPUT_KEY_KP2,   HID_KEY_KP_2,   HID_KEY_DOWN},
-	{INPUT_KEY_KP3,   HID_KEY_KP_3,   HID_KEY_PAGEDOWN},
-	{INPUT_KEY_KP0,   HID_KEY_KP_0,   HID_KEY_INSERT},
-	{INPUT_KEY_KPDOT, HID_KEY_KP_DOT, HID_KEY_DELETE},
-};
+/* 按键状态机 / NumLock 双功能层翻译已移入公共层 src/hid/hid_keymap.c，
+ * 与 USB transport（src/usb/usb_hid.c）共用同一份逻辑与状态。 */
 
 /* ==================== 广播 ==================== */
 
@@ -263,10 +224,11 @@ static void advertising_stop(void)
 static int kbd_report_send(void)
 {
 	uint8_t buf[INPUT_REP_KEYS_LEN] = {0};
+	const struct hid_kb_state *st = hid_kb_state_get();
 
-	buf[MODIFIER_KEY_POS] = kbd_state.modifier;
+	buf[MODIFIER_KEY_POS] = st->modifier;
 	buf[RESERVED_KEY_POS] = 0;
-	memcpy(&buf[SCAN_CODE_POS], kbd_state.keys, KEY_PRESS_MAX);
+	memcpy(&buf[SCAN_CODE_POS], st->keys, KEY_PRESS_MAX);
 
 	if (boot_mode) {
 		return bt_hids_boot_kb_inp_rep_send(&hids_obj, NULL, buf,
@@ -302,49 +264,15 @@ static int consumer_tap(uint16_t usage)
 				    sizeof(buf), NULL);
 }
 
-/* ==================== 按键状态 ==================== */
-
-/*
- * 修饰键（Ctrl/Shift/Alt/GUI）记在 Byte0 的位图里，其余键占用 6 个键值槽。
- * mod_mask 由 input_to_hid_modifier(INPUT_KEY_*) 得到（注意入参是 input 码，
- * 不是已换算出的 HID 用法）。
+/* ==================== 按键状态 ====================
+ * 状态机已移入公共层（hid_kb_state_key / hid_kb_state_reset），
+ * 本模块只负责「改状态 + 组包发送」。
  */
-static void kbd_key_set(uint8_t usage, uint8_t mod_mask)
-{
-	if (mod_mask != 0) {
-		kbd_state.modifier |= mod_mask;
-		return;
-	}
-
-	for (size_t i = 0; i < KEY_PRESS_MAX; i++) {
-		if (kbd_state.keys[i] == 0) {
-			kbd_state.keys[i] = usage;
-			return;
-		}
-	}
-
-	LOG_WRN("键值槽已满（6KRO），按键 0x%02X 被丢弃", usage);
-}
-
-static void kbd_key_clear(uint8_t usage, uint8_t mod_mask)
-{
-	if (mod_mask != 0) {
-		kbd_state.modifier &= ~mod_mask;
-		return;
-	}
-
-	for (size_t i = 0; i < KEY_PRESS_MAX; i++) {
-		if (kbd_state.keys[i] == usage) {
-			kbd_state.keys[i] = 0;
-			return;
-		}
-	}
-}
 
 /* 清空所有按键并尝试发一次报告（用于切换模式 / 断开连接前的「全键释放」） */
 static void kbd_release_all(void)
 {
-	memset(&kbd_state, 0, sizeof(kbd_state));
+	hid_kb_state_reset();
 
 	if (!is_connected) {
 		return;
@@ -358,28 +286,9 @@ static void kbd_release_all(void)
 }
 
 /*
- * INPUT_KEY_* -> HID 用法，带 NumLock 层切换。
- * @retval 0 成功；负数表示该键值未映射到 HID（例如 MUTE 不在键盘映射表里）
+ * INPUT_KEY_* -> HID 用法的翻译（含 NumLock 层）已移入公共层：
+ * hid_keymap_resolve()，USB transport 与本模块共用。
  */
-static int key_usage_resolve(uint16_t input_code, uint8_t *usage)
-{
-	for (size_t i = 0; i < ARRAY_SIZE(dual_keys); i++) {
-		if (dual_keys[i].input_code == input_code) {
-			*usage = numlock_on ? dual_keys[i].hid_num
-					    : dual_keys[i].hid_nav;
-			return 0;
-		}
-	}
-
-	int16_t code = input_to_hid_code(input_code);
-
-	if (code < 0) {
-		return -ENOENT;
-	}
-
-	*usage = (uint8_t)code;
-	return 0;
-}
 
 /* ==================== 输入事件 ==================== */
 
@@ -421,7 +330,7 @@ static void keymap_evt_cb(struct input_event *evt, void *user_data)
 		}
 
 		k_mutex_lock(&hid_lock, K_FOREVER);
-		err = is_connected ? consumer_tap(CONSUMER_USAGE_MUTE) : 0;
+		err = is_connected ? consumer_tap(HID_CONSUMER_USAGE_MUTE) : 0;
 		k_mutex_unlock(&hid_lock);
 
 		if (err) {
@@ -433,11 +342,11 @@ static void keymap_evt_cb(struct input_event *evt, void *user_data)
 	}
 
 	/* 修饰键走 Byte0 位图，不占 6 个键值槽，也不参与上面的键值翻译 */
-	uint8_t mod_mask = input_to_hid_modifier(evt->code);
+	uint8_t mod_mask = hid_keymap_modifier(evt->code);
 	uint8_t usage = 0;
 
 	if (mod_mask == 0) {
-		err = key_usage_resolve(evt->code, &usage);
+		err = hid_keymap_resolve(evt->code, &usage);
 		if (err) {
 			LOG_WRN("未映射的键值 INPUT_KEY_%u (%s)",
 				(unsigned int)evt->code,
@@ -448,11 +357,7 @@ static void keymap_evt_cb(struct input_event *evt, void *user_data)
 
 	k_mutex_lock(&hid_lock, K_FOREVER);
 
-	if (pressed) {
-		kbd_key_set(usage, mod_mask);
-	} else {
-		kbd_key_clear(usage, mod_mask);
-	}
+	hid_kb_state_key(usage, mod_mask, pressed);
 
 	err = is_connected ? kbd_report_send() : 0;
 
@@ -484,7 +389,8 @@ static void knob_cb(enum kb_knob_dir dir, int16_t step, int32_t total,
 	}
 
 	bool up = (dir == KB_KNOB_CW);
-	uint16_t usage = up ? CONSUMER_USAGE_VOL_UP : CONSUMER_USAGE_VOL_DOWN;
+	uint16_t usage = up ? HID_CONSUMER_USAGE_VOL_UP
+			    : HID_CONSUMER_USAGE_VOL_DOWN;
 
 	k_mutex_lock(&hid_lock, K_FOREVER);
 	err = is_connected ? consumer_tap(usage) : 0;
@@ -616,8 +522,7 @@ static void connected_cb(struct bt_conn *conn, uint8_t err)
 	hids_err = bt_hids_connected(&hids_obj, conn);
 	is_connected = true;
 	is_advertising = false;
-	kbd_state.modifier = 0;
-	memset(kbd_state.keys, 0, sizeof(kbd_state.keys));
+	hid_kb_state_reset();
 	old = cur_conn;
 	cur_conn = ref;
 	k_mutex_unlock(&hid_lock);
@@ -657,8 +562,8 @@ static void disconnected_cb(struct bt_conn *conn, uint8_t reason)
 	}
 	is_connected = false;
 	boot_mode = false;
-	memset(&kbd_state, 0, sizeof(kbd_state));  /* 丢掉残留的按下状态 */
-	numlock_on = true;                          /* 断连复位为默认数字模式 */
+	hid_kb_state_reset();   /* 丢掉残留的按下状态 */
+	hid_numlock_set(true);  /* 断连复位为默认数字模式 */
 	k_mutex_unlock(&hid_lock);
 
 	kb_led_force_off(1, 0);                     /* 熄灭 NumLock 指示灯 */
@@ -722,27 +627,8 @@ static struct bt_conn_auth_info_cb auth_info_callbacks = {
 
 static void led_report_apply(uint8_t leds)
 {
-	bool new_state = ((leds & LED_BIT_NUM_LOCK) != 0);
-
-	if (new_state == numlock_on) {
-		return;
-	}
-
-	numlock_on = new_state;
-
-	/*
-	 * NumLock 灯指示：方向（导航）模式下 NumLock 键 LED 常亮，
-	 * 数字模式下取消常亮。注意此函数形参也叫 leds，与 LED 模块无关。
-	 */
-	if (numlock_on) {
-		kb_led_force_off(1, 0);
-	} else {
-		kb_led_force_on(1, 0);
-	}
-
-	LOG_INF("主机 NumLock: %s（%s层生效）%s", numlock_on ? "开" : "关",
-		numlock_on ? "数字" : "导航",
-		numlock_on ? "" : "，NumLock 灯常亮");
+	/* NumLock 同步与 (1,0) 指示灯逻辑在公共层（与 USB transport 共用） */
+	hid_numlock_set((leds & HID_LED_BIT_NUM_LOCK) != 0);
 }
 
 static void hids_outp_rep_handler(struct bt_hids_rep *rep, struct bt_conn *conn,
@@ -784,64 +670,7 @@ static void hids_pm_evt_handler(enum bt_hids_pm_evt evt, struct bt_conn *conn)
 
 /* ==================== HIDS 初始化 ==================== */
 
-static const uint8_t hid_report_map[] = {
-	/* ---- Collection: Keyboard ---- */
-	0x05, 0x01,       /* Usage Page (Generic Desktop) */
-	0x09, 0x06,       /* Usage (Keyboard) */
-	0xA1, 0x01,       /* Collection (Application) */
-
-	/* ---- Report ID 1: Keyboard Keys (input) ---- */
-	0x85, REPORT_ID_KEYS,
-	0x05, 0x07,       /* Usage Page (Keyboard/Keypad) */
-	0x19, 0xE0,       /* Usage Minimum (0xE0) */
-	0x29, 0xE7,       /* Usage Maximum (0xE7) */
-	0x15, 0x00,       /* Logical Minimum (0) */
-	0x25, 0x01,       /* Logical Maximum (1) */
-	0x75, 0x01,       /* Report Size (1) */
-	0x95, 0x08,       /* Report Count (8) */
-	0x81, 0x02,       /* Input (Data, Variable, Absolute) - 修饰键 */
-
-	0x95, 0x01,       /* Report Count (1) */
-	0x75, 0x08,       /* Report Size (8) */
-	0x81, 0x01,       /* Input (Constant) - 保留字节 */
-
-	0x95, 0x06,       /* Report Count (6) */
-	0x75, 0x08,       /* Report Size (8) */
-	0x15, 0x00,       /* Logical Minimum (0) */
-	0x25, 0x65,       /* Logical Maximum (0x65) */
-	0x05, 0x07,       /* Usage Page (Keyboard/Keypad) */
-	0x19, 0x00,       /* Usage Minimum (0) */
-	0x29, 0x65,       /* Usage Maximum (0x65) */
-	0x81, 0x00,       /* Input (Data, Array) - 6 个键值，即 6KRO */
-
-	/* ---- Report ID 2: Keyboard LEDs (output) ---- */
-	0x85, REPORT_ID_LEDS,
-	0x95, 0x05,       /* Report Count (5) */
-	0x75, 0x01,       /* Report Size (1) */
-	0x05, 0x08,       /* Usage Page (LEDs) */
-	0x19, 0x01,       /* Usage Minimum (1) - Num Lock */
-	0x29, 0x05,       /* Usage Maximum (5) */
-	0x91, 0x02,       /* Output (Data, Variable, Absolute) */
-	0x95, 0x01,       /* Report Count (1) */
-	0x75, 0x03,       /* Report Size (3) */
-	0x91, 0x01,       /* Output (Constant) - 补齐到 1 字节 */
-
-	0xC0,             /* End Collection (Keyboard) */
-
-	/* ---- Collection: Consumer Control（系统音量）---- */
-	0x05, 0x0C,       /* Usage Page (Consumer) */
-	0x09, 0x01,       /* Usage (Consumer Control) */
-	0xA1, 0x01,       /* Collection (Application) */
-	0x85, REPORT_ID_CONSUMER,
-	0x15, 0x00,       /* Logical Minimum (0) */
-	0x26, 0xFF, 0x03, /* Logical Maximum (0x03FF) */
-	0x19, 0x00,       /* Usage Minimum (0) */
-	0x2A, 0xFF, 0x03, /* Usage Maximum (0x03FF) */
-	0x75, 0x10,       /* Report Size (16) */
-	0x95, 0x01,       /* Report Count (1) */
-	0x81, 0x00,       /* Input (Data, Array, Absolute) - 16 位用法值 */
-	0xC0,             /* End Collection (Consumer) */
-};
+/* HID 报告描述符已移入公共层 src/hid/hid_keymap.c（与 USB transport 共用） */
 
 static int hid_service_init(void)
 {
@@ -851,7 +680,7 @@ static int hid_service_init(void)
 	struct bt_hids_outp_feat_rep *hids_outp_rep;
 
 	hids_init_obj.rep_map.data = hid_report_map;
-	hids_init_obj.rep_map.size = sizeof(hid_report_map);
+	hids_init_obj.rep_map.size = hid_report_map_size;
 
 	hids_init_obj.info.bcd_hid = BASE_USB_HID_SPEC_VERSION;
 	hids_init_obj.info.b_country_code = 0x00;
@@ -904,7 +733,7 @@ bool kb_ble_hid_is_advertising(void)
 
 bool kb_ble_hid_numlock_get(void)
 {
-	return numlock_on;
+	return hid_numlock_get();
 }
 
 int kb_ble_hid_init(void)
@@ -988,16 +817,19 @@ static int cmd_ble_status(const struct shell *sh, size_t argc, char **argv)
 		    is_connected ? "已连接" : "未连接",
 		    is_advertising ? "是" : "否",
 		    boot_mode ? "Boot" : "Report",
-		    numlock_on ? "开(数字层)" : "关(导航层)");
+		    hid_numlock_get() ? "开(数字层)" : "关(导航层)");
 	shell_print(sh, "当前模式: %s（仅 BLE 档才从蓝牙发出）",
 		    kb_mode_name(kb_mode_get()));
 	shell_print(sh, "绑定状态: %s",
 		    has_bond ? "已有配对主机（等回连，蓝灯慢闪）"
 			     : "无（配对模式，蓝灯快闪）");
-	shell_print(sh, "按下状态: 修饰键=0x%02X 键值=%02X %02X %02X %02X %02X %02X",
-		    kbd_state.modifier, kbd_state.keys[0], kbd_state.keys[1],
-		    kbd_state.keys[2], kbd_state.keys[3], kbd_state.keys[4],
-		    kbd_state.keys[5]);
+	{
+		const struct hid_kb_state *st = hid_kb_state_get();
+
+		shell_print(sh, "按下状态: 修饰键=0x%02X 键值=%02X %02X %02X %02X %02X %02X",
+			    st->modifier, st->keys[0], st->keys[1],
+			    st->keys[2], st->keys[3], st->keys[4], st->keys[5]);
+	}
 
 	return 0;
 }

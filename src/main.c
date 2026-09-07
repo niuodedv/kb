@@ -6,6 +6,7 @@
 #include "mode/mode.h"
 #include "knob/knob.h"
 #include "ble/ble_hid.h"
+#include "usb/usb_hid.h"
 #include "power/ip5306.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
@@ -48,6 +49,16 @@ int main(void)
 	err = kb_ble_hid_init();
 	if (err) {
 		LOG_ERR("BLE HID 模块初始化失败: %d", err);
+		return err;
+	}
+
+	/*
+	 * USB HID：USB 档插入后由主机枚举，按键仅 USB 档发出。
+	 * 依赖 kb_mode_init()（读模式门控）与公共 HID 层，无严格顺序要求。
+	 */
+	err = kb_usb_hid_init();
+	if (err) {
+		LOG_ERR("USB HID 模块初始化失败: %d", err);
 		return err;
 	}
 
