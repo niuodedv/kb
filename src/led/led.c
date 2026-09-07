@@ -56,6 +56,7 @@ enum {
 struct led_state {
 	uint8_t level;   /* 当前亮度 0~255（相对目标颜色的比例） */
 	uint8_t state;
+	bool force;      /* 强制常亮（忽略松手渐灭），用于状态指示 */
 };
 
 /*
@@ -215,6 +216,17 @@ static void anim_handler(struct k_work *work)
 	dirty = false;
 
 	for (int i = 0; i < KB_LED_COUNT; i++) {
+		/* 强制常亮的灯：维持满亮，忽略按键松手与渐灭 */
+		if (leds[i].force) {
+			if (leds[i].level != 255) {
+				leds[i].level = 255;
+				changed = true;
+			}
+			leds[i].state = LED_ST_HELD;
+			active = true;
+			continue;
+		}
+
 		switch (leds[i].state) {
 		case LED_ST_HELD:
 			if (leds[i].level != 255) {
@@ -308,6 +320,11 @@ int kb_led_release(uint8_t row, uint8_t col)
 	}
 
 	k_mutex_lock(&lock, K_FOREVER);
+	if (leds[idx].force) {
+		/* 强制常亮中的键，无视松手 */
+		k_mutex_unlock(&lock);
+		return 0;
+	}
 	if (leds[idx].state == LED_ST_HELD) {
 		leds[idx].state = LED_ST_FADE;
 		dirty = true;
@@ -325,11 +342,53 @@ void kb_led_all_off(void)
 	for (int i = 0; i < KB_LED_COUNT; i++) {
 		leds[i].state = LED_ST_IDLE;
 		leds[i].level = 0;
+		leds[i].force = false;
 	}
 	dirty = true;
 	k_mutex_unlock(&lock);
 
 	k_work_reschedule(&anim_dwork, K_NO_WAIT);
+}
+
+int kb_led_force_on(uint8_t row, uint8_t col)
+{
+	uint8_t idx = led_index_of(row, col);
+
+	if (idx == KB_LED_NONE) {
+		/* EC11 旋钮按键等无灯键位：静默忽略 */
+		return 0;
+	}
+
+	k_mutex_lock(&lock, K_FOREVER);
+	leds[idx].force = true;
+	leds[idx].state = LED_ST_HELD;
+	leds[idx].level = 255;
+	dirty = true;
+	k_mutex_unlock(&lock);
+
+	k_work_reschedule(&anim_dwork, K_NO_WAIT);
+
+	return 0;
+}
+
+int kb_led_force_off(uint8_t row, uint8_t col)
+{
+	uint8_t idx = led_index_of(row, col);
+
+	if (idx == KB_LED_NONE) {
+		return 0;
+	}
+
+	k_mutex_lock(&lock, K_FOREVER);
+	leds[idx].force = false;
+	leds[idx].state = LED_ST_IDLE;
+	leds[idx].level = 0;
+	dirty = true;
+	k_mutex_unlock(&lock);
+
+	k_work_reschedule(&anim_dwork, K_NO_WAIT);
+
+	return 0;
 }
 
 int kb_led_set_color(uint8_t r, uint8_t g, uint8_t b)

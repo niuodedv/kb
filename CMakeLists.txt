@@ -17,6 +17,7 @@ target_sources(app PRIVATE
 	src/led/led.c
 	src/mode/mode.c
 	src/knob/knob.c
+	src/ble/ble_hid.c
 	src/power/ip5306.c
 	src/power/battery.c
 )

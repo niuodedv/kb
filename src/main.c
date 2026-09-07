@@ -5,6 +5,7 @@
 #include "led/led.h"
 #include "mode/mode.h"
 #include "knob/knob.h"
+#include "ble/ble_hid.h"
 #include "power/ip5306.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
@@ -13,7 +14,7 @@ int main(void)
 {
 	int err;
 
-	LOG_INF("=== 蓝牙小键盘启动（矩阵按键 + 按键 LED + 模式检测） ===");
+	LOG_INF("=== 蓝牙小键盘启动（矩阵按键 + LED + 模式检测 + 旋钮 + BLE HID） ===");
 
 	err = keys_init();
 	if (err) {
@@ -36,6 +37,17 @@ int main(void)
 	err = kb_knob_init();
 	if (err) {
 		LOG_ERR("旋钮模块初始化失败: %d", err);
+		return err;
+	}
+
+	/*
+	 * BLE HID：注册 HIDS 服务并启动蓝牙协议栈。
+	 * 必须在 kb_mode_init() 之后：初始化时要读一次当前模式，
+	 * 上电就在 BLE 档的话直接开始广播。
+	 */
+	err = kb_ble_hid_init();
+	if (err) {
+		LOG_ERR("BLE HID 模块初始化失败: %d", err);
 		return err;
 	}
 

@@ -81,6 +81,22 @@ int kb_led_release(uint8_t row, uint8_t col);
  */
 void kb_led_all_off(void);
 
+/**
+ * @brief 强制某键 LED 常亮（忽略按下/松手，用于 NumLock 等状态指示）
+ *
+ * 非阻塞，可在任意线程调用。常亮期间该键的 press/release 不再控制其亮度，
+ * 直到调用 kb_led_force_off。无灯键位（KB_LED_NONE）静默忽略。
+ *
+ * @param row 矩阵行号（0 起）
+ * @param col 矩阵列号（0 起）
+ */
+int kb_led_force_on(uint8_t row, uint8_t col);
+
+/**
+ * @brief 取消某键 LED 强制常亮，恢复为熄灭/默认按键行为
+ */
+int kb_led_force_off(uint8_t row, uint8_t col);
+
 /** @brief 设置全局颜色（默认 0,255,0 纯绿） */
 int kb_led_set_color(uint8_t r, uint8_t g, uint8_t b);
 
