@@ -6,7 +6,8 @@
  *
  * 布局见 lcd 显示.txt【4.2】：
  *   第一行：左=三模图标（当前白底红字，其余黑底白字描白边）
- *           右=电量色条 + 电量百分比（色条靠最右，百分比数字在条左侧右对齐）
+ *           右=电池图标（白壳+正极凸头，内芯分色填充）+ 放大 2 倍的
+ *             电量百分比数字（未采样显示 "--%"）；充电时 “CHG” 绿色小字
  *   第二行：居中大字时间 yyyy-MM-dd HH:mm:ss（kb_time 软件时钟）
  *   第三行：亮度滑动条（白底，左端按亮度填绿，从左到右递增）
  * 交互：方向（导航）模式（NumLock 关）时旋钮调亮度（ble 音量此时让出）；
@@ -57,27 +58,43 @@ LOG_MODULE_REGISTER(kb_lcd, LOG_LEVEL_INF);
 #define MODE_TXT_SCALE  2u
 #define MODE_TXT_GAP    2u   /* 字间距(px)，缩放后字符宽 = 5*scale */
 
-/* 行 1：电量数字 + 电量条（整体靠右；条在最右，数字在条左侧右对齐） */
-#define GAUGE_W         44
-#define GAUGE_H         16
-#define GAUGE_X         (LCD_W - 8 - GAUGE_W)      /* 右缘距屏右 8px */
-#define GAUGE_Y         (MODE_Y0 + 4)              /* 8 */
+/* 行 1：右上角电量组 = [CHG 槽][放大百分比数字][电池图标(外壳+正极凸头)]，
+ * 与左侧三模图标块同高(24px)并垂直居中对齐；图标整体靠最右(屏右留 8px)。 */
+#define GRP_Y0         (MODE_Y0)
+#define GRP_H          (MODE_BLOCK_H)
+#define BAT_RIGHT      (LCD_W - 8)     /* 组右缘(不含) */
 
-/* 电量百分比数字：靠右排在色条左侧（色条带黑框后更醒目） */
-#define BAT_PCT_GAP       4u   /* 数字与色条间距 */
-#define BAT_PCT_SCALE     1u   /* 7px 高，与色条垂直居中对齐 */
-#define BAT_PCT_CHAR_GAP  1u   /* 数字间字间距 */
+/* 电池图标几何：白壳(2px 线宽，顶/底行两端各留 2px 成圆角观感)内嵌
+ * 2px 黑色间隙的内容区，内容区按电量比例填色；右侧实心凸头贴壳居中。 */
+#define SHELL_W        26
+#define SHELL_H        16
+#define SHELL_FRAME    2u
+#define SHELL_GAP      2u
+#define TAB_W          3u
+#define TAB_H          8u
+#define INNER_W        (SHELL_W - 2 * (SHELL_FRAME + SHELL_GAP))  /* 18 */
+#define INNER_H        (SHELL_H - 2 * (SHELL_FRAME + SHELL_GAP))  /* 8  */
+#define INNER_OFF      (SHELL_FRAME + SHELL_GAP)                  /* 4  */
+#define SHELL_X        (BAT_RIGHT - TAB_W - SHELL_W)
+#define SHELL_Y        (GRP_Y0 + (GRP_H - SHELL_H) / 2)
+#define GAUGE_BUF_W    (SHELL_W + TAB_W)                          /* 行缓冲宽 */
 
-/* 充电指示 “CHG”：固定槽位，位于百分比数字左侧。
- * 百分比数字右对齐到色条，最宽为 “100%”；CHG 槽按该最宽位置再左移一格预留，
- * 保证任意位数下都不与数字重叠，且槽位固定便于放电时整槽清黑。 */
-#define CHG_TXT_GAP      4u    /* CHG 与（最宽）百分比数字的间距 */
-#define CHG_PCT_MAX_W    (4 * ((int)KB_FONT_W * BAT_PCT_SCALE + BAT_PCT_CHAR_GAP) \
-			  - BAT_PCT_CHAR_GAP)                                   /* “100%” 宽 */
-#define CHG_TXT_W        (3 * ((int)KB_FONT_W * BAT_PCT_SCALE + BAT_PCT_CHAR_GAP) \
-			  - BAT_PCT_CHAR_GAP)                                   /* “CHG” 宽 */
-#define CHG_TXT_X        (GAUGE_X - (int)BAT_PCT_GAP - CHG_PCT_MAX_W \
-			  - (int)CHG_TXT_GAP - CHG_TXT_W)
+/* 百分比大数字：放大 2 倍，右对齐固定槽（槽宽按最宽 “100%”），
+ * 槽位固定 => 数字位数变化时电池图标不会左右抖动。 */
+#define BAT_PCT_GAP       6u   /* 数字槽与电池壳间距 */
+#define BAT_PCT_SCALE     2u
+#define BAT_PCT_CHAR_GAP  1u
+#define BAT_PCT_SLOT_W    (4 * ((int)KB_FONT_W * BAT_PCT_SCALE + BAT_PCT_CHAR_GAP) \
+			   - BAT_PCT_CHAR_GAP)                       /* “100%” 宽 */
+#define BAT_PCT_X_R       (SHELL_X - BAT_PCT_GAP)
+#define BAT_PCT_X         (BAT_PCT_X_R - BAT_PCT_SLOT_W)
+#define BAT_PCT_Y         (GRP_Y0 + (GRP_H - (int)(KB_FONT_H * BAT_PCT_SCALE)) / 2)
+
+/* 充电指示 “CHG”：固定槽位，位于百分比数字槽左侧（充电时绿色，平时整槽清黑）。 */
+#define CHG_TXT_GAP      4u
+#define CHG_TXT_W        (3 * ((int)KB_FONT_W + BAT_PCT_CHAR_GAP) - BAT_PCT_CHAR_GAP)
+#define CHG_TXT_X        (BAT_PCT_X - (int)CHG_TXT_GAP - CHG_TXT_W)
+#define CHG_TXT_Y        (GRP_Y0 + (GRP_H - (int)KB_FONT_H) / 2)
 
 /* 行 2：时间（19 字符 x 16px = 304，字形 5x7 放大 3 倍，高 21） */
 #define TIME_SCALE      3u
@@ -271,52 +288,71 @@ static const struct kb_rgb *pct_color(uint8_t pct)
 	return &CLR_RED;
 }
 
-static void draw_gauge_row(uint8_t *buf, int r, uint8_t pct, bool valid)
+/* 电池图标单行：白壳(顶/底 2px、左右 2px 竖框，顶/底两端切角圆角) +
+ * 右侧正极凸头 + 内容区按比例填充（放电随电量 绿/黄/红，充电整条绿）。
+ * r 为图标局部行号(0..SHELL_H-1)，buf 宽 GAUGE_BUF_W(=壳+凸头)。 */
+static void draw_gauge_row(uint8_t *buf, int r, uint8_t pct, bool valid,
+			   bool charging)
 {
+	int i;
 	int fill_w;
-	int inner_w = GAUGE_W - 2;
+	int tab_top = (int)(SHELL_H - TAB_H) / 2;
 
-	/* 1px 黑框让色条在白底上更醒目 */
-	if (r == 0 || r == GAUGE_H - 1) {
-		row_fill(buf, GAUGE_W, &CLR_BLACK);
-		return;
+	row_fill(buf, GAUGE_BUF_W, &CLR_BLACK);
+
+	/* 白壳：2px 边框，四角留 SHELL_FRAME 切角成圆角观感 */
+	if (r < (int)SHELL_FRAME || r >= (int)SHELL_H - (int)SHELL_FRAME) {
+		for (i = (int)SHELL_FRAME; i < (int)SHELL_W - (int)SHELL_FRAME;
+		     i++) {
+			px_set(buf, i, &CLR_WHITE);
+		}
+	} else if (r < (int)SHELL_H) {
+		for (i = 0; i < (int)SHELL_FRAME; i++) {
+			px_set(buf, i, &CLR_WHITE);
+			px_set(buf, (int)SHELL_W - 1 - i, &CLR_WHITE);
+		}
 	}
 
-	row_fill(buf, GAUGE_W, &CLR_WHITE);
-	px_set(buf, 0, &CLR_BLACK);
-	px_set(buf, GAUGE_W - 1, &CLR_BLACK);
+	/* 内容区（内嵌 2px 黑色间隙）按比例填电量色 */
+	if (valid && pct != 0 && r >= (int)INNER_OFF &&
+	    r < (int)INNER_OFF + (int)INNER_H) {
+		const struct kb_rgb *col = charging ? &CLR_GREEN : pct_color(pct);
 
-	if (!valid || pct == 0) {
-		return;
+		fill_w = ((int)INNER_W * pct) / 100;
+		if (fill_w > (int)INNER_W) {
+			fill_w = (int)INNER_W;
+		}
+		for (i = (int)INNER_OFF; i < (int)INNER_OFF + fill_w; i++) {
+			px_set(buf, i, col);
+		}
 	}
 
-	fill_w = (inner_w * pct) / 100;
-	if (fill_w > inner_w) {
-		fill_w = inner_w;
-	}
-	for (int x = 1; x < GAUGE_W - 1; x++) {
-		if ((x - 1) < fill_w) {
-			px_set(buf, x, pct_color(pct));
+	/* 正极凸头：贴壳右侧、垂直居中实心白 */
+	if (r >= tab_top && r < tab_top + (int)TAB_H) {
+		for (i = (int)SHELL_W; i < (int)GAUGE_BUF_W; i++) {
+			px_set(buf, i, &CLR_WHITE);
 		}
 	}
 }
 
-static void draw_gauge(uint8_t pct, bool valid)
+static void draw_gauge(uint8_t pct, bool valid, bool charging)
 {
-	for (int r = 0; r < GAUGE_H; r++) {
-		draw_gauge_row(row_buf, r, pct, valid);
-		flush_row(GAUGE_X, GAUGE_Y + r, row_buf, GAUGE_W);
+	for (int r = 0; r < SHELL_H; r++) {
+		draw_gauge_row(row_buf, r, pct, valid, charging);
+		flush_row(SHELL_X, SHELL_Y + r, row_buf, GAUGE_BUF_W);
 	}
 }
 
-/* 电量百分比数字：右对齐排在色条左侧（未采样到有效电量时显示 "--%"） */
+/* 电量百分比数字：放大 2 倍，右对齐固定槽排到电池图标左侧
+ * （未采样到有效电量时显示 "--%"） */
 static void draw_pct_text(uint8_t pct, bool valid)
 {
 	char s[8];
 	int n;
 	int w;
-	int x;
-	int top;
+	int x0;
+	int rows = (int)(KB_FONT_H * BAT_PCT_SCALE);
+	int r;
 
 	if (valid) {
 		snprintf(s, sizeof(s), "%u%%", (unsigned)pct);
@@ -328,41 +364,40 @@ static void draw_pct_text(uint8_t pct, bool valid)
 	n = (int)strlen(s);
 	w = n * (int)(KB_FONT_W * BAT_PCT_SCALE + BAT_PCT_CHAR_GAP)
 	    - BAT_PCT_CHAR_GAP;
-	x = GAUGE_X - (int)BAT_PCT_GAP - w;
-	top = GAUGE_Y + (GAUGE_H - (int)KB_FONT_H) / 2;
+	x0 = BAT_PCT_SLOT_W - w;   /* 槽内右对齐 */
 
 	/* 注意：字形“行内偏移”要传 0——落屏 y 已在 flush 里用 top+r 承担，
 	 * 若再传 top，glyph_row 的 rr=row-top 恒为负，数字一个字都画不出来。 */
-	for (int r = 0; r < KB_FONT_H; r++) {
-		row_fill(row_buf, w, &CLR_BLACK);
-		text_row(row_buf, w, s, 0, 0, r, BAT_PCT_SCALE,
+	for (r = 0; r < rows; r++) {
+		row_fill(row_buf, BAT_PCT_SLOT_W, &CLR_BLACK);
+		text_row(row_buf, BAT_PCT_SLOT_W, s, x0, 0, r, BAT_PCT_SCALE,
 			 BAT_PCT_CHAR_GAP, &CLR_WHITE);
-		flush_row(x, top + r, row_buf, w);
+		flush_row(BAT_PCT_X, BAT_PCT_Y + r, row_buf, BAT_PCT_SLOT_W);
 	}
 }
 
-/* 充电指示：百分比数字左侧固定槽位显示 “CHG”（充电中）；放电时整槽清黑 */
+/* 充电指示：数字槽左侧固定槽显示 “CHG”（充电中，绿色）；放电整槽清黑 */
 static void draw_chg_state(bool charging)
 {
-	int top = GAUGE_Y + ((int)GAUGE_H - (int)KB_FONT_H) / 2;
+	int r;
 
-	for (int r = 0; r < KB_FONT_H; r++) {
+	for (r = 0; r < (int)KB_FONT_H; r++) {
 		row_fill(row_buf, CHG_TXT_W, &CLR_BLACK);
 		if (charging) {
-			text_row(row_buf, CHG_TXT_W, "CHG", 0, 0, r,
-				 BAT_PCT_SCALE, BAT_PCT_CHAR_GAP, &CLR_WHITE);
+			text_row(row_buf, CHG_TXT_W, "CHG", 0, 0, r, 1,
+				 BAT_PCT_CHAR_GAP, &CLR_GREEN);
 		}
-		flush_row(CHG_TXT_X, top + r, row_buf, CHG_TXT_W);
+		flush_row(CHG_TXT_X, CHG_TXT_Y + r, row_buf, CHG_TXT_W);
 	}
 }
 
-/* 电池总控件：充电指示 + 百分比数字 + 电量条
+/* 电池总控件：充电指示 + 百分比数字 + 电池图标
  * （数据是否有效：尚无首拍电压时显示 "--%"） */
 static void draw_battery_area(uint8_t pct, bool valid, bool charging)
 {
 	draw_chg_state(charging);
 	draw_pct_text(pct, valid);
-	draw_gauge(pct, valid);
+	draw_gauge(pct, valid, charging);
 }
 
 /* ---------------- 控件：第二行时间 ---------------- */
