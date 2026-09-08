@@ -387,6 +387,12 @@ static void knob_cb(enum kb_knob_dir dir, int16_t step, int32_t total,
 	ARG_UNUSED(user_data);
 	int err;
 
+	/* 方向（导航）模式（NumLock 关）时旋钮让给 LCD 调背光亮度；
+	 * 数字模式（NumLock 开）才用旋钮调音量（见 lcd 显示.txt 5） */
+	if (!hid_numlock_get()) {
+		return;
+	}
+
 	if (kb_mode_get() != KB_MODE_BLE) {
 		return;
 	}

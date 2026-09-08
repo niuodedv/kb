@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "hid/hid_keymap.h"
+#include "knob/knob.h"
 #include "mode/mode.h"
 
 #include <zephyr/device.h>
@@ -362,6 +363,34 @@ static void usb_keymap_evt_cb(struct input_event *evt, void *user_data)
 
 INPUT_CALLBACK_DEFINE(keymap_dev, usb_keymap_evt_cb, NULL);
 
+/* ==================== 旋钮：系统音量 ==================== */
+
+static void usb_knob_cb(enum kb_knob_dir dir, int16_t step, int32_t total,
+			int32_t angle, void *user_data)
+{
+	ARG_UNUSED(step);
+	ARG_UNUSED(total);
+	ARG_UNUSED(angle);
+	ARG_UNUSED(user_data);
+
+	/* 方向（导航）模式（NumLock 关）时旋钮让给 LCD 调背光亮度；
+	 * 数字模式（NumLock 开）才用旋钮调音量（与 ble_hid.c 的 knob_cb 对称） */
+	if (!hid_numlock_get()) {
+		return;
+	}
+
+	if (kb_mode_get() != KB_MODE_USB) {
+		return;
+	}
+
+	bool up = (dir == KB_KNOB_CW);
+	uint16_t usage = up ? HID_CONSUMER_USAGE_VOL_UP
+			    : HID_CONSUMER_USAGE_VOL_DOWN;
+
+	usb_consumer_tap(usage);
+	LOG_INF("USB 上报: 音量 %s", up ? "+" : "-");
+}
+
 /* ==================== 模式联动 ==================== */
 
 static void usb_mode_cb(enum kb_mode prev, enum kb_mode now, void *user_data)
@@ -429,6 +458,12 @@ int kb_usb_hid_init(void)
 	err = kb_mode_register_cb(usb_mode_cb, NULL);
 	if (err) {
 		LOG_ERR("订阅模式变化失败: %d", err);
+		return err;
+	}
+
+	err = kb_knob_register_cb(usb_knob_cb, NULL);
+	if (err) {
+		LOG_ERR("订阅旋钮事件失败: %d", err);
 		return err;
 	}
 

@@ -9,6 +9,8 @@
 #include "usb/usb_hid.h"
 #include "power/ip5306.h"
 #include "power/bat_adc.h"
+#include "time/kb_time.h"
+#include "lcd/lcd.h"
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -73,6 +75,20 @@ int main(void)
 	err = kb_bat_adc_init();
 	if (err) {
 		LOG_ERR("电池电压采样模块初始化失败: %d", err);
+		return err;
+	}
+
+	/* 软件时钟 + LCD 屏幕（详见 lcd 显示.txt）：
+	 * LCD 在最后初始化，保证模式/电源/旋钮等先就绪（其专用线程会再等 150ms）。 */
+	err = kb_time_init();
+	if (err) {
+		LOG_ERR("软件时钟初始化失败: %d", err);
+		return err;
+	}
+
+	err = kb_lcd_init();
+	if (err) {
+		LOG_ERR("LCD 屏幕初始化失败: %d", err);
 		return err;
 	}
 

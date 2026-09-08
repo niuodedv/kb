@@ -3,13 +3,20 @@
  *
  * WS2812 灯带（worldsemi,ws2812-spi）挂在 SPI2 上：
  *   MOSI = P0.20 (RGB_DATA)
- *   SCK  = P1.10 (哑引脚，对外不接线)
+ *   SCK  = P0.14 (哑引脚，对外不接线)
  *
  * ⚠️ WS2812 是单线协议，只用到 MOSI；但 SPIM 外设的 SCK 若不在 pinctrl 里
  *    分配，就不会产生时钟，自然也就没有 MOSI 波形。因此必须给 SCK 分配一个
- *    空闲引脚。P1.10 是暂定值，若与后续屏幕/编码器/ADC 分配冲突，改这里即可，
- *    不影响任何 C 代码。
+ *    空闲引脚。原暂定 P1.10 与屏幕 SCREEN_RES(P1.10) 冲突，已迁移到 P0.14；
+ *    若再与后续外设冲突，改这里即可，不影响任何 C 代码。
  * ⚠️ 绝对不要用 P0.00 / P0.01（模块脚 11/13，32.768kHz 晶振 XL1/XL2）。
+ *
+ * LCD 屏幕（ST7789V，SPI 只写，挂 SPI3，见 lcd 显示.txt）：
+ *   MOSI = P0.28 (SCREEN_SDA)
+ *   SCK  = P1.13 (SCREEN_SCL)
+ *   CS   = P0.02（SPI 控制器 cs-gpios，不在此文件）
+ * 背光（PWM）：
+ *   PWM0_OUT0 = P1.11 (SCREEN_BLK)
  */
 
 #include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
@@ -17,15 +24,45 @@
 &pinctrl {
 	spi2_default: spi2_default {
 		group1 {
-			psels = <NRF_PSEL(SPIM_SCK, 1, 10)>,   /* 哑 SCK：P1.10 */
+			psels = <NRF_PSEL(SPIM_SCK, 0, 14)>,   /* 哑 SCK：P0.14 */
 				<NRF_PSEL(SPIM_MOSI, 0, 20)>;  /* RGB_DATA：P0.20 */
 		};
 	};
 
 	spi2_sleep: spi2_sleep {
 		group1 {
-			psels = <NRF_PSEL(SPIM_SCK, 1, 10)>,
+			psels = <NRF_PSEL(SPIM_SCK, 0, 14)>,
 				<NRF_PSEL(SPIM_MOSI, 0, 20)>;
+			low-power-enable;
+		};
+	};
+
+	/* LCD 屏幕 SPI3：只写（无 MISO），SCK=P1.13 / MOSI=P0.28 */
+	spi3_default: spi3_default {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 13)>,   /* SCREEN_SCL：P1.13 */
+				<NRF_PSEL(SPIM_MOSI, 0, 28)>;  /* SCREEN_SDA：P0.28 */
+		};
+	};
+
+	spi3_sleep: spi3_sleep {
+		group1 {
+			psels = <NRF_PSEL(SPIM_SCK, 1, 13)>,
+				<NRF_PSEL(SPIM_MOSI, 0, 28)>;
+			low-power-enable;
+		};
+	};
+
+	/* LCD 背光 PWM0：输出 0 = P1.11 (SCREEN_BLK) */
+	pwm0_default: pwm0_default {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 11)>;
+		};
+	};
+
+	pwm0_sleep: pwm0_sleep {
+		group1 {
+			psels = <NRF_PSEL(PWM_OUT0, 1, 11)>;
 			low-power-enable;
 		};
 	};

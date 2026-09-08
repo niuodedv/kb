@@ -18,6 +18,8 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		/* LCD 显示设备（ST7789V）：应用层经 display API 直接写屏 */
+		zephyr,display = &st7789v;
 	};
 
 	/*
@@ -146,8 +148,8 @@
  * '0' 高 250ns，正好落在驱动文档给的「'0' 200~500ns / '1' >=550ns」窗口内。
  *
  * ⚠️ WS2812 是单线协议只用到 MOSI，但 SPIM 外设必须有 SCK 才会出时钟，
- *    所以 pinctrl 里给 SCK 分配了空闲哑引脚 P1.10（对外不接线）。
- * ⚠️ 后续屏幕 SPI 必须避开 spi2。
+ *    所以 pinctrl 里给 SCK 分配了空闲哑引脚 P0.14（对外不接线）。
+ * ⚠️ 屏幕 SPI 用 spi3，避开 spi2。
  */
 &spi2 {
 	compatible = "nordic,nrf-spim";
@@ -167,6 +169,70 @@
 				 LED_COLOR_ID_RED
 				 LED_COLOR_ID_BLUE>;   /* WS2812 线上顺序是 GRB */
 		reset-delay = <50>;
+	};
+};
+
+/*
+ * LCD 屏幕（ST7789V，320x172，SPI 只写）挂 SPI3（详见 lcd 显示.txt）
+ *   SCK = P1.13 (SCREEN_SCL) / MOSI = P0.28 (SCREEN_SDA)
+ *   CS  = P0.02，由 SPI 控制器 cs-gpios 管理（低有效，硬接 LCD 的 CS）
+ *   DC  = P0.03 / RES = P1.10 / 背光 BLK = P1.11（PWM0）
+ */
+&spi3 {
+	status = "okay";
+	pinctrl-0 = <&spi3_default>;
+	pinctrl-1 = <&spi3_sleep>;
+	pinctrl-names = "default", "sleep";
+	cs-gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;   /* SCREEN_CS：P0.02 */
+};
+
+/* LCD 背光：PWM0 OUT0 = P1.11 (SCREEN_BLK)，应用层按亮度百分比调占空比 */
+&pwm0 {
+	status = "okay";
+	pinctrl-0 = <&pwm0_default>;
+	pinctrl-1 = <&pwm0_sleep>;
+	pinctrl-names = "default", "sleep";
+};
+
+/ {
+	/* mipi-dbi + ST7789V 显示设备（MIPI-DBI-SPI 走 spi3，详见 lcd 显示.txt）。
+	 * 参数参考 SDK shields/st7789v_generic 的 320x170 屏，上板按
+	 * lcd 显示.txt【8】标定 x/y-offset 与 mdac。 */
+	mipi_dbi0: mipi-dbi {
+		compatible = "zephyr,mipi-dbi-spi";
+		spi-dev = <&spi3>;
+		dc-gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;      /* SCREEN_DC：P0.03 */
+		reset-gpios = <&gpio1 10 GPIO_ACTIVE_LOW>;   /* SCREEN_RES：P1.10 */
+		write-only;
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		st7789v: st7789v@0 {
+			compatible = "sitronix,st7789v";
+			reg = <0>;
+			mipi-max-frequency = <16000000>;
+			width = <320>;
+			height = <172>;
+			x-offset = <0>;
+			y-offset = <35>;      /* 待上板实测微调（见 lcd 显示.txt 8.2） */
+			vcom = <0x2b>;
+			gctrl = <0x35>;
+			vrhs = <0x0f>;
+			vdvs = <0x20>;
+			mdac = <0xA0>;        /* 实测:0x60 需整体转180°,取反 MY|MX=0xA0 后文字正立(0xE0 会整幅左右镜像,勿用) */
+			gamma = <0x01>;
+			colmod = <0x55>;      /* 16bit 65K */
+			lcm = <0x2c>;
+			porch-param = [0c 0c 00 33 33];
+			cmd2en-param = [5a 69 02 01];
+			pwctrl1-param = [52 a1];
+			pvgam-param = [D0 00 02 07 0B 1A 31 54 40 29 12 12 12 17];
+			nvgam-param = [D0 00 02 07 05 15 2D 44 44 1C 18 16 1C 1D];
+			ram-param = [00 F8];
+			rgb-param = [CD 08 14];
+			mipi-mode = "MIPI_DBI_MODE_SPI_4WIRE";
+		};
 	};
 };
 
