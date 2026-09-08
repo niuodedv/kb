@@ -27,6 +27,14 @@ extern "C" {
  */
 int kb_usb_hid_init(void);
 
+/**
+ * @brief 释放全部按键（断电/关机前调用，尽力而为）
+ *
+ * 清空公共 HID 键盘状态、丢弃队列中残留报文，并在 USB 就绪时补发一帧
+ * 全 0 键盘报告，避免主机残留按键。本接口不切模式、不使能/关闭 USB。
+ */
+void kb_usb_hid_release_all(void);
+
 #ifdef __cplusplus
 }
 #endif

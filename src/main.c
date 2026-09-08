@@ -9,6 +9,7 @@
 #include "usb/usb_hid.h"
 #include "power/ip5306.h"
 #include "power/bat_adc.h"
+#include "power/pm.h"
 #include "time/kb_time.h"
 #include "lcd/lcd.h"
 
@@ -89,6 +90,13 @@ int main(void)
 	err = kb_lcd_init();
 	if (err) {
 		LOG_ERR("LCD 屏幕初始化失败: %d", err);
+		return err;
+	}
+
+	/* 低功耗状态机：必须放所有模块就绪之后（订阅按键/旋钮/模式活动源） */
+	err = kb_pm_init();
+	if (err) {
+		LOG_ERR("低功耗模块初始化失败: %d", err);
 		return err;
 	}
 

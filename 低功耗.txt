@@ -1,6 +1,6 @@
 低功耗（两级空闲降载 / 断电停机）实现方案
 ===========================================
-版本：V0.1（仅方案，不含代码）
+版本：V1.0（已按本方案实现：src/power/pm.c、src/mode/mode.c 等，编译通过）
 适用范围：nRF52840 + Zephyr(NCS 3.2.3) + IP5306-I2C 三模数字小键盘
 依据：
   - 需求（口头）：1) 持续 1 分钟无操作 → 降频 + 调低 LCD 亮度，
@@ -183,8 +183,10 @@
      见 8.6；time 模块回放逻辑按 kb_time 现状）。
   5) 停 IP5306 保活：ip5306_keepalive_stop()（电源管理.txt 4.1 约定：
      停定时器的唯一时机 = 准备整机断电）。
-  6) CPU 进入 System Off：sys_pm_power_state_force(PM_STATE_SOFT_OFF)
-     （需 CONFIG_PM=y）。若该 API 不可用，退化为空转 WFI，靠下一步断电。
+  6) CPU 进入 System Off：CONFIG_POWEROFF=y + sys_poweroff()
+     （Zephyr lib/os/poweroff.c 调用 nRF SoC 的 z_sys_poweroff()）。
+     若未开 CONFIG_POWEROFF（代码里 #if 保护），退化为空转挂死，
+     同样靠下一步 IP5306 自动待机断电兜底。
   7) IP5306 轻载自动待机：保活停止后，SYS_POWER 侧只剩 LDO 静态 +
      MCU System Off（微安级）< 45mA，IP5306 按默认轻载关机时间
      （出厂 8~64s 之一）自动关 boost → 3V3 掉电 → 整机断电。
@@ -208,7 +210,7 @@
 |------|------|-----------|
 | 新增 src/power/pm.c / pm.h | 空闲计时状态机 + 活动订阅 + 充电轮询 + IDLE/POWEROFF 动作编排 + shell 调试命令（见 9.3） | 必须 |
 | src/main.c | 最后调用 kb_pm_init()（须在 keys/knob/mode/lcd/ip5306 之后） | 必须 |
-| prj.conf | CONFIG_PM=y（System Off 用）；预留 CONFIG_PM_DEVICE 视需要 | 必须 |
+| prj.conf | CONFIG_POWEROFF=y（sys_poweroff() -> nRF System Off，见 6.2-6） | 必须 |
 | src/knob/knob.c | CB_SLOTS 4→6（容纳 pm 活动回调，留余量） | 必须 |
 | src/lcd/lcd.c | 线程由 k_sleep 轮询改为可挂起（新增 kb_lcd_set_idle(bool)）；恢复时全量重绘 | 必须 |
 | src/lcd/backlight.h/c | 无（set/get 已够用）；亮度恢复值由 pm 记录 | 必须(无改) |
@@ -260,11 +262,11 @@
   [ ] 充电豁免：充电中静置超 5 分钟 → 不休眠；拔线后重新计时 5 分钟断电；
   [ ] IDLE 期间插入充电 → 恢复 ACTIVE；
   [ ] 长稳：反复进入/退出档 1 数十次，无残影、无死机、无日志错乱。
-9.3 shell 调试命令（建议）
-  pm status   —— 当前状态/距下档剩余时间/最近活动时刻/活动计数
-  pm now      —— 立即进档 1（测量用）
-  pm off      —— 立即走档 2 流程（测量用，等效 5 分钟超时）
-  pm enable 0/1 —— 开关自动省电（标定/长测时用）
+9.3 shell 调试命令（已实现，RTT 输入）
+  pm status    —— 当前状态(满速/Idle/Off)/自动/充电/背光 + 活动与各档计数
+  pm idle 或 pm now —— 立即进档 1（测量用，等效 1 分钟无操作）
+  pm off       —— 立即走档 2 流程（测量用，等效 5 分钟无操作）
+  pm auto on|off —— 开关自动省电（标定/长测时用）
 
 ------------------------------------------------
 十、风险与注意

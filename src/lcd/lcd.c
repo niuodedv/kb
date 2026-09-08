@@ -122,6 +122,11 @@ static bool last_charging;           /* 上次绘制的充电状态 */
 
 static int64_t last_bat_check_ms;
 
+/* 低功耗挂起控制：kb_lcd_set_idle() 置标志 + 给信号量唤醒线程，
+ * 线程按当前 idle 标志决定挂起还是恢复巡检（见 lcd_thread_entry）。 */
+static struct k_sem lcd_ctrl;
+static bool lcd_idle;
+
 /* ---------------- 基础像素原语 ---------------- */
 
 static inline void px_set(uint8_t *buf, int x, const struct kb_rgb *c)
@@ -514,7 +519,23 @@ static void lcd_thread_entry(void *p1, void *p2, void *p3)
 	last_bat_check_ms = k_uptime_get();
 
 	for (;;) {
-		k_sleep(K_MSEC(LCD_POLL_MS));
+		if (lcd_idle) {
+			/* 低功耗挂起：先把滑条按“当前(已调低)亮度”补一帧，
+			 * 再停等 kb_lcd_set_idle(false) 唤醒（期间不刷 SPI/不读 I2C）。 */
+			refresh_slider();
+			LOG_DBG("LCD 刷新挂起（低功耗），画面冻结");
+			k_sem_take(&lcd_ctrl, K_FOREVER);
+
+			if (!lcd_idle) {
+				/* 被唤醒：全量重绘补齐走秒/电量/滑条，再回常规节奏 */
+				redraw_all();
+				last_bat_check_ms = k_uptime_get();
+				LOG_DBG("LCD 刷新恢复，全量重绘");
+			}
+			continue;
+		}
+
+		k_sem_take(&lcd_ctrl, K_MSEC(LCD_POLL_MS));
 
 		refresh_top_left();
 
@@ -530,6 +551,22 @@ static void lcd_thread_entry(void *p1, void *p2, void *p3)
 
 K_THREAD_STACK_DEFINE(lcd_stack, 1024);
 static struct k_thread lcd_thread_data;
+
+/* ---------------- 低功耗挂起/恢复 ---------------- */
+
+int kb_lcd_set_idle(bool idle)
+{
+	if (lcd_idle == idle) {
+		return 0;
+	}
+
+	/* 标志 + 信号量：线程要么被立刻唤醒处理（退出挂起会全量重绘），
+	 * 要么在下一个循环看到标志转入挂起等待。线程内执行，无阻塞。 */
+	lcd_idle = idle;
+	k_sem_give(&lcd_ctrl);
+
+	return 0;
+}
 
 /* ---------------- 旋钮：方向（导航）模式下调亮度 ---------------- */
 
@@ -592,6 +629,8 @@ int kb_lcd_init(void)
 		LOG_ERR("订阅旋钮失败: %d", err);
 		return err;
 	}
+
+	k_sem_init(&lcd_ctrl, 0, 1);   /* 信号量初值 0，最大 1（挂起/唤醒通知） */
 
 	k_thread_create(&lcd_thread_data, lcd_stack,
 			K_THREAD_STACK_SIZEOF(lcd_stack),

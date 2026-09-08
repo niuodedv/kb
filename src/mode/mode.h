@@ -11,6 +11,7 @@
 #ifndef MODE_H_
 #define MODE_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -86,6 +87,27 @@ int kb_mode_override(enum kb_mode mode);
  * @param raw 输出原始码值，可为 NULL
  */
 int kb_mode_read(int32_t *mv, int32_t *raw);
+
+/**
+ * @brief 调整模式轮询周期（低功耗档 1 用：空闲时放慢 ADC 采样）
+ *
+ * 周期范围 50~60000ms，默认 100ms。调用后立即按新周期补一拍，
+ * 心跳日志与周期解耦（按真实时间每 30s 一条）。
+ *
+ * @param ms 新的轮询周期（毫秒）
+ * @retval 0 成功
+ * @retval -EINVAL 周期越界
+ */
+int kb_mode_set_poll_period_ms(uint32_t ms);
+
+/**
+ * @brief 开关 30s 心跳日志（低功耗档 1 用：空闲时停掉，避免日志周期
+ *        性唤醒 CPU，干扰电流测量）
+ *
+ * @param enabled true=开启（默认）；false=暂停。恢复开启后按真实时间
+ *        到点立即补一条。
+ */
+void kb_mode_set_heartbeat(bool enabled);
 
 /** @brief 模式名（日志用） */
 const char *kb_mode_name(enum kb_mode mode);

@@ -25,6 +25,7 @@
 #include <zephyr/drivers/adc.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 
 LOG_MODULE_REGISTER(mode, LOG_LEVEL_INF);
 
@@ -61,8 +62,10 @@ static const struct adc_dt_spec mode_adc = {
 #define INIT_SAMPLE_N   3
 #define POLL_PERIOD_MS  100
 #define DEBOUNCE_N      3
-/* 心跳周期：每 30 秒打一条存活日志（带 raw 原始值），日志时间戳即可看出系统是何时卡死的 */
-#define HEARTBEAT_POLLS (30000U / POLL_PERIOD_MS)
+/* 心跳：按真实时间每 30 秒打一条存活日志（带 raw 原始值）。
+ * 不用“轮询次数”而用时间基准：低功耗档 1 会把轮询放慢到 1s，
+ * 若按次数，心跳会被拉长到 300s，失去“从日志看出系统卡死”的意义。 */
+#define HEARTBEAT_MS 30000U
 
 #define CB_SLOTS 4
 
@@ -77,7 +80,11 @@ static enum kb_mode cur_mode = KB_MODE_UNKNOWN;
 static enum kb_mode override_mode = KB_MODE_UNKNOWN;
 static enum kb_mode candidate = KB_MODE_UNKNOWN;
 static uint8_t candidate_cnt;
-static uint32_t poll_count;
+/* 轮询周期可动态调整（默认 POLL_PERIOD_MS），原子读：轮询线程读、外部线程写 */
+static atomic_t poll_period_ms = ATOMIC_INIT(POLL_PERIOD_MS);
+/* 30s 心跳日志开关（低功耗档 1 空闲时停），原子读：轮询线程读、外部线程写 */
+static atomic_t hb_enabled = ATOMIC_INIT(1);
+static uint64_t last_hb_ms;   /* 上次心跳时间戳（毫秒） */
 
 static struct k_mutex lock;
 static struct k_work_delayable poll_work;
@@ -244,19 +251,24 @@ static void poll_handler(struct k_work *work)
 	int32_t raw;
 	int err;
 	enum kb_mode m;
+	uint32_t per;
+	uint64_t now;
 
 	ARG_UNUSED(work);
 
+	/* 周期可调（低功耗档1 放慢到 1s），每次轮询按“当前”设定调度下一次 */
+	per = (uint32_t)atomic_get(&poll_period_ms);
+
 	if (override_mode != KB_MODE_UNKNOWN) {
 		/* 被覆盖：不判档，但保持轮询，解除覆盖后能立刻恢复 */
-		k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
+		k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(per));
 		return;
 	}
 
 	err = sample_mv(&mv, &raw);
 	if (err) {
 		LOG_ERR("MODE 采样失败: %d", err);
-		k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
+		k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(per));
 		return;
 	}
 
@@ -282,12 +294,14 @@ static void poll_handler(struct k_work *work)
 		}
 	}
 
-	if ((++poll_count % HEARTBEAT_POLLS) == 0) {
+	now = k_uptime_get();
+	if (atomic_get(&hb_enabled) && ((now - last_hb_ms) >= HEARTBEAT_MS)) {
+		last_hb_ms = now;
 		LOG_INF("心跳: 模式=%s MODE=%d mV raw=%d（日志停止说明系统已卡死或掉电）",
 			kb_mode_name(cur_mode), (int)mv, (int)raw);
 	}
 
-	k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
+	k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(per));
 }
 
 enum kb_mode kb_mode_get(void)
@@ -401,6 +415,26 @@ int kb_mode_init(void)
 	k_work_reschedule_for_queue(&mode_workq, &poll_work, K_MSEC(POLL_PERIOD_MS));
 
 	return 0;
+}
+
+int kb_mode_set_poll_period_ms(uint32_t ms)
+{
+	/* 上/下限：100ms 为出厂默认（快），60s 足够调试用 */
+	if ((ms < 50U) || (ms > 60000U)) {
+		return -EINVAL;
+	}
+
+	atomic_set(&poll_period_ms, ms);
+
+	/* 立即补一拍，让新周期马上生效（原 pending 的轮询被本项取代） */
+	k_work_reschedule_for_queue(&mode_workq, &poll_work, K_NO_WAIT);
+
+	return 0;
+}
+
+void kb_mode_set_heartbeat(bool enabled)
+{
+	atomic_set(&hb_enabled, enabled ? 1 : 0);
 }
 
 /* ================= shell 调试命令 =================

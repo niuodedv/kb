@@ -60,6 +60,10 @@ static const struct gpio_dt_spec bat_en =
 static uint16_t bat_mv;      /* 最近一次电池电压（mV） */
 static uint8_t bat_percent;  /* 最近一次电量百分比 */
 
+/* 采样暂停/恢复控制（低功耗档1：屏幕不显示电量时停止 5s 周期唤醒） */
+static struct k_sem ctrl;
+static volatile bool sampling;
+
 static int sample_once(int32_t *mv)
 {
 	/* ⚠️ nRF SAADC 每样本 int16_t（mode.c 同款教训：int32 会混入栈残留） */
@@ -145,8 +149,14 @@ static void bat_thread_fn(void *p1, void *p2, void *p3)
 	ARG_UNUSED(p3);
 
 	for (;;) {
-		measure();
-		k_sleep(K_MSEC(PERIOD_MS));
+		if (sampling) {
+			measure();
+			/* 满速：等满一个周期再测 */
+			k_sem_take(&ctrl, K_MSEC(PERIOD_MS));
+		} else {
+			/* 暂停：挂死等待，恢复(sampling=true)时的 k_sem_give 唤醒后立刻补测一拍 */
+			k_sem_take(&ctrl, K_FOREVER);
+		}
 	}
 }
 
@@ -182,6 +192,9 @@ int kb_bat_adc_init(void)
 		return err;
 	}
 
+	k_sem_init(&ctrl, 0, 1);
+	sampling = true;
+
 	LOG_INF("电池电压采样就绪（EN=P0.09 高有效，AIN7，周期 %us，"
 		"线程延迟 %dms 启动）",
 		(unsigned)(PERIOD_MS / 1000U), THREAD_DELAY_MS);
@@ -197,4 +210,16 @@ uint16_t kb_bat_adc_get_mv(void)
 uint8_t kb_bat_adc_get_percent(void)
 {
 	return bat_percent;
+}
+
+int kb_bat_adc_set_sampling(bool sampling_en)
+{
+	sampling = sampling_en;
+
+	if (sampling_en) {
+		/* 唤醒采样线程，立即补测一拍（低功耗退出时让电量马上刷新） */
+		k_sem_give(&ctrl);
+	}
+
+	return 0;
 }

@@ -431,6 +431,20 @@ static void usb_mode_cb(enum kb_mode prev, enum kb_mode now, void *user_data)
 	}
 }
 
+/* ==================== 断电前全键释放 ==================== */
+
+void kb_usb_hid_release_all(void)
+{
+	/* 断电/关机前：清空状态并丢一帧全 0 键盘报告，尽力让主机松开按键。
+	 * usb_ready=false（未在 USB 档/主机未枚举）时只清本地状态，无害。 */
+	hid_kb_state_reset();
+	k_msgq_purge(&usb_tx_msgq);
+
+	if (usb_ready) {
+		(void)usb_kbd_report_send();
+	}
+}
+
 /* ==================== 初始化 ==================== */
 
 int kb_usb_hid_init(void)

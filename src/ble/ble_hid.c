@@ -751,6 +751,15 @@ bool kb_ble_hid_numlock_get(void)
 	return hid_numlock_get();
 }
 
+void kb_ble_hid_release_all(void)
+{
+	/* 断电/关机前尽力让主机松开所有按键：清空 HID 状态并补发全 0
+	 * 键盘报告。已连接才会真正发出去；未连接只清本地状态，无害。 */
+	k_mutex_lock(&hid_lock, K_FOREVER);
+	kbd_release_all();
+	k_mutex_unlock(&hid_lock);
+}
+
 int kb_ble_hid_init(void)
 {
 	int err;

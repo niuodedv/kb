@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -26,6 +27,20 @@ extern "C" {
  * @retval 0 成功
  */
 int kb_lcd_init(void);
+
+/**
+ * @brief 挂起/恢复 LCD 周期刷新（低功耗档 1/2 用）
+ *
+ * - idle=true ：停止 200ms 巡检与 1s 电池 I2C 读取，画面保持最后一帧
+ *   （ST7789 有 GRAM 自刷新），刷新线程转入挂起等待。
+ * - idle=false：立即唤醒线程做一次全量重绘，再恢复正常巡检节奏。
+ *
+ * @param idle true=挂起刷新 / false=恢复刷新
+ * @retval 0 成功
+ *
+ * @note 本接口只控制“刷新”，不碰背光亮度（由调用方 kb_backlight_set_percent）
+ */
+int kb_lcd_set_idle(bool idle);
 
 #ifdef __cplusplus
 }

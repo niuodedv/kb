@@ -12,6 +12,7 @@
 #ifndef BAT_ADC_H_
 #define BAT_ADC_H_
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -34,6 +35,16 @@ uint16_t kb_bat_adc_get_mv(void);
 
 /** @brief 最近一次测得的电量百分比（线性映射 3.3~4.2V，待标定） */
 uint8_t kb_bat_adc_get_percent(void);
+
+/**
+ * @brief 暂停/恢复周期采样（低功耗档 1 用：屏幕不显示电量时停止 5s 唤醒）
+ *
+ * - sampling=false：线程转入挂起等待，不再周期测量（不消耗漏电）；
+ * - sampling=true ：立即唤醒补测一拍，之后恢复正常周期。
+ *
+ * @retval 0 成功
+ */
+int kb_bat_adc_set_sampling(bool sampling);
 
 #ifdef __cplusplus
 }

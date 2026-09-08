@@ -65,7 +65,8 @@ static const int8_t qem_table[16] = {
 /* 步数 -> 角度(度)：steps * 360 / STEPS_PER_REV，用 64 位防溢出；整格时恒为整数 */
 #define KNOB_ANGLE(steps) ((int32_t)((int64_t)(steps) * 360 / STEPS_PER_REV))
 #define KNOB_IDLE_MS     500    /* 停止转动超过此时长则认为本次旋转结束并清零累计 */
-#define CB_SLOTS         4
+/* 订阅槽：lcd(亮度)、ble(音量)、usb(音量)、pm(活动监控) 各占 1，留 2 个余量 */
+#define CB_SLOTS         6
 
 struct cb_entry {
 	kb_knob_cb_t cb;

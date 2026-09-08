@@ -23,6 +23,7 @@ target_sources(app PRIVATE
 	src/power/ip5306.c
 	src/power/battery.c
 	src/power/bat_adc.c
+	src/power/pm.c
 	src/time/kb_time.c
 	src/lcd/lcd.c
 	src/lcd/lcd_font.c

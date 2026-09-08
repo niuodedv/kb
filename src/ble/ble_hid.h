@@ -47,6 +47,14 @@ bool kb_ble_hid_is_advertising(void);
 bool kb_ble_hid_numlock_get(void);
 
 /**
+ * @brief 释放全部按键（断电/关机前调用，尽力而为）
+ *
+ * 清空 HID 键盘状态并补发一条全 0 键盘报告，避免主机残留按键；
+ * 仅已连接时才会真正发出。本接口不切模式、不广播。
+ */
+void kb_ble_hid_release_all(void);
+
+/**
  * @brief 主动进入配对模式
  *
  * 清除本端全部绑定 -> 断开现有连接 -> 重新广播（无绑定 = 配对模式）。
