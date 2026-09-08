@@ -1,0 +1,17 @@
+# Copyright (c) 2026 kb project
+# SPDX-License-Identifier: Apache-2.0
+
+description: >
+  USB bus wrapper for USB device class nodes on the nRF52840 USB controller.
+
+  The nordic,nrf-usbd binding does not declare a `bus`, so a class node that
+  requires `on-bus: usb` (e.g. zephyr,cdc-acm-uart) can not be a direct child
+  of &usbd. This wrapper only declares `bus: usb` and maps to no driver; the
+  class instance is still registered into the single USBD context by
+  usbd_register_all_classes().
+
+compatible: "kb,usb-bus"
+
+bus: usb
+
+properties: {}

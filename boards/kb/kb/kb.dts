@@ -291,6 +291,28 @@
  */
 &usbd {
 	status = "okay";
+
+	/*
+	 * 上位机控制口：CDC-ACM 虚拟串口（与 HID 键盘接口组成复合设备）。
+	 * 主机侧 host_cli.py 通过该 COM 口下 AA55 帧 + protobuf 子集协议
+	 * （hello/time_sync/theme_rgb，详见 src/usb/usb_host_cdc.c）。
+	 *
+	 * 为什么包一层 kb,usb-bus：nordic,nrf-usbd 绑定不带 usb bus 定义，
+	 * 而 zephyr,cdc-acm-uart 有 on-bus: usb 断言，不能直接挂 &usbd。
+	 * 包装节点只提供 bus: usb（绑定 dts/bindings/kb,usb-bus.yaml），
+	 * 不映射驱动；CDC 类实例仍由 usb_hid.c 的 usbd_register_all_classes()
+	 * 统一登记到同一个 usb_ctx 上下文。
+	 */
+	usb_class_bus: usb-class-bus {
+		compatible = "kb,usb-bus";
+
+		cdc_acm_uart0: cdc-acm-uart0 {
+			compatible = "zephyr,cdc-acm-uart";
+			label = "CDC0";
+			tx-fifo-size = <512>;
+			rx-fifo-size = <512>;
+		};
+	};
 };
 
 / {

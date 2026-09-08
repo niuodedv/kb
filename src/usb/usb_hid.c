@@ -28,6 +28,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/usb/class/usbd_hid.h>
+#include <zephyr/usb/usb_ch9.h>
 #include <zephyr/usb/usbd.h>
 
 LOG_MODULE_REGISTER(usb_hid, LOG_LEVEL_INF);
@@ -513,7 +514,18 @@ int kb_usb_hid_init(void)
 		return err;
 	}
 
-	usbd_device_set_code_triple(&usb_ctx, USBD_SPEED_FS, 0, 0, 0);
+	/*
+	 * 复合设备 bDeviceClass：
+	 * - 仅 HID 接口时 0x00（由接口描述符决定，键盘协议不受影响）；
+	 * - 叠加 CDC-ACM 接口后改 Miscellaneous(0xEF)+subclass2+proto1，
+	 *   Windows 用 IAD 才能正确把虚拟串口枚举出来（对齐 cdc_acm 样例）。
+	 */
+	if (IS_ENABLED(CONFIG_USBD_CDC_ACM_CLASS)) {
+		usbd_device_set_code_triple(&usb_ctx, USBD_SPEED_FS,
+					    USB_BCC_MISCELLANEOUS, 0x02, 0x01);
+	} else {
+		usbd_device_set_code_triple(&usb_ctx, USBD_SPEED_FS, 0, 0, 0);
+	}
 
 	err = usbd_msg_register_cb(&usb_ctx, usbd_msg_cb);
 	if (err) {

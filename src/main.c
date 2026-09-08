@@ -7,6 +7,7 @@
 #include "knob/knob.h"
 #include "ble/ble_hid.h"
 #include "usb/usb_hid.h"
+#include "usb/usb_host_cdc.h"
 #include "power/ip5306.h"
 #include "power/bat_adc.h"
 #include "power/pm.h"
@@ -63,6 +64,14 @@ int main(void)
 	err = kb_usb_hid_init();
 	if (err) {
 		LOG_ERR("USB HID 模块初始化失败: %d", err);
+		return err;
+	}
+
+	/* 上位机控制通道（CDC-ACM 虚拟串口）：需在 usb_hid_init 之后，
+	 * 依赖它已完成 usbd_register_all_classes 把 CDC 类登记进同一上下文。 */
+	err = kb_usb_host_cdc_init();
+	if (err) {
+		LOG_ERR("上位机 CDC 通道初始化失败: %d", err);
 		return err;
 	}
 
